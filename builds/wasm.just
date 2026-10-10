@@ -229,6 +229,6 @@ wasm-native-parity port="8081" *cases="":
 		exit 1
 	fi
 	# shellcheck disable=SC2086
-	uv run --with pillow --with playwright --with numpy python3 scripts/qa_showcase_native_wasm.py \
+	uv run --with pillow --with playwright python3 scripts/qa_showcase_native_wasm.py \
 		--port {{port}} --manifest-json "$native_dir/manifest.json" --native-dir "$native_dir/metal/actual" \
 		${matrix_flags:+--cases $matrix_flags}

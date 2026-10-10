@@ -9,7 +9,8 @@ use super::{
 use crate::data_navigation::DataVirtualWindow;
 use gpui::prelude::{InteractiveElement, ParentElement, StatefulInteractiveElement, Styled};
 use gpui::{
-    App, CursorStyle, Div, ElementId, FontWeight, MouseButton, Pixels, Stateful, Window, div,
+    App, CursorStyle, Div, ElementId, FontWeight, MouseButton, Pixels, SharedString, Stateful,
+    Window, div,
 };
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -191,15 +192,19 @@ pub(super) fn build_body<T: 'static>(
     if let Some(height) = virtual_spacer_height(virtual_row_height, virtual_window.before_count()) {
         body = body.child(div().h(height).flex_shrink_0());
     }
+    // Hoisted: one format per frame instead of one per row. The per-row clone
+    // below is an Rc bump, not an allocation.
+    let table_name: SharedString = table_id.to_string().into();
     for (row_idx, row_data) in rows
         .iter()
         .enumerate()
         .skip(virtual_window.start)
         .take(virtual_window.len())
     {
-        let is_selected = selected_indices.contains(&row_idx);
+        let is_selected =
+            !selected_indices.is_empty() && selected_indices.contains(&row_idx);
         let mut row_el = div()
-            .id(ElementId::named_usize(table_id.to_string(), row_idx))
+            .id(ElementId::named_usize(table_name.clone(), row_idx))
             .flex()
             .w_full()
             .border_b_1()

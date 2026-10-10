@@ -436,36 +436,11 @@ impl Showcase {
                 StepStatus::NotVisited,
             ],
             users: vec![
-                User {
-                    id: 1,
-                    name: "Alice Smith".into(),
-                    email: "alice@example.com".into(),
-                    role: "Admin".into(),
-                },
-                User {
-                    id: 2,
-                    name: "Bob Jones".into(),
-                    email: "bob@example.com".into(),
-                    role: "User".into(),
-                },
-                User {
-                    id: 3,
-                    name: "Charlie Brown".into(),
-                    email: "charlie@example.com".into(),
-                    role: "Editor".into(),
-                },
-                User {
-                    id: 4,
-                    name: "David Wilson".into(),
-                    email: "david@example.com".into(),
-                    role: "User".into(),
-                },
-                User {
-                    id: 5,
-                    name: "Eve Adams".into(),
-                    email: "eve@example.com".into(),
-                    role: "Admin".into(),
-                },
+                User::new(1, "Alice Smith", "alice@example.com", "Admin"),
+                User::new(2, "Bob Jones", "bob@example.com", "User"),
+                User::new(3, "Charlie Brown", "charlie@example.com", "Editor"),
+                User::new(4, "David Wilson", "david@example.com", "User"),
+                User::new(5, "Eve Adams", "eve@example.com", "Admin"),
             ],
             selected_users: HashSet::new(),
             sort_state: Some(SortState {
@@ -546,7 +521,9 @@ impl Showcase {
             }));
     }
 
-    pub(crate) fn select_section(&mut self, section: ShowcaseSection, cx: &mut Context<Self>) {
+    /// Switch the visible section. Public so embedders and benchmarks can
+    /// drive the showcase without going through navigation clicks.
+    pub fn select_section(&mut self, section: ShowcaseSection, cx: &mut Context<Self>) {
         if section != ShowcaseSection::QrCode {
             // AnimatedQrCode owns a 30 Hz timer. Releasing its entities while
             // the section is hidden prevents idle redraws across the app.

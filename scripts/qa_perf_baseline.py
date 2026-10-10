@@ -126,6 +126,18 @@ BENCHMARKS: list[BenchSpec] = [
         groups=["insert_char", "backspace", "delete_selection", "kill_word_backward"],
     ),
     BenchSpec("gpui-ios", "accessibility_diff", [], groups=["accessibility_diff"]),
+    BenchSpec(
+        "gpui-ui-kit",
+        "table",
+        ["bench"],
+        groups=["table_*"],
+    ),
+    BenchSpec(
+        "gpui-showcase",
+        "e2e_frames",
+        [],
+        groups=["showcase_frame_*"],
+    ),
 ]
 
 

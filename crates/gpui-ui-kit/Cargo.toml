@@ -69,6 +69,7 @@ urlencoding = []
 
 [dev-dependencies]
 gpui = { version = "0.2.3",  package = "sotf-gpui-toolkit-gpui", git = "https://github.com/pierreaubert/sotf-3rdparties", features = ["test-support"] }
+gpui_wgpu = { workspace = true }
 rqrr = { workspace = true }
 criterion = { workspace = true }
 gpui-profiler = { path = "../gpui-profiler", features = ["global-allocator"] }
@@ -240,6 +241,11 @@ name = "workflow_debug"
 
 [[bench]]
 name = "edit_state"
+harness = false
+required-features = ["bench"]
+
+[[bench]]
+name = "table"
 harness = false
 required-features = ["bench"]
 

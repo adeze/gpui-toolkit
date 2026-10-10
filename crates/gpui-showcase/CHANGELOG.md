@@ -1,5 +1,11 @@
 # Unreleased
 
+## Added
+
+- Added an `e2e_frames` criterion benchmark (cold-open plus first frame
+  for the buttons, table, and tree-view sections) wired into the
+  `qa-perf` non-regression gate.
+
 ## Fixed
 
 - Set the `I18nState` global in the headless `--visual-capture` harness
@@ -10,6 +16,9 @@
   the wasm platform exactly; the CoreText system stack resolved "IBM Plex
   Sans" to a wider fallback face whose extra wrapped lines shifted layout
   (dialog/popover/tooltip parity failures).
+- Memoized showcase `User` cell strings (`SharedString` fields plus
+  `id_text`) so table cell renderers do Rc bumps instead of per-frame
+  `String` clones and integer formatting.
 
 # 0.10.6
 

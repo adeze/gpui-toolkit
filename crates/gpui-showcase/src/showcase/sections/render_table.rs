@@ -26,7 +26,7 @@ impl Showcase {
                                 Table::new("showcase-table", self.users.clone())
                                     .column(
                                         Column::new("id", "ID").width(px(60.0)).cell_render(
-                                            |user: &User, _, _, _| user.id.to_string(),
+                                            |user: &User, _, _, _| user.id_text.clone(),
                                         ),
                                     )
                                     .column(

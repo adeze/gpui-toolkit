@@ -1,5 +1,19 @@
 # Unreleased
 
+## Added
+
+- Added a `table` criterion benchmark (headless element build, layout,
+  and scene paint for mount, redraw, page flip, selection, virtual
+  scroll, and sort) wired into the `qa-perf` non-regression gate.
+- Added allocation contracts for table pagination math, virtual-window
+  scroll math, selection toggles, and a per-frame redraw budget.
+
+## Fixed
+
+- Hoisted the per-row table-id string in `build_body` (one format per
+  frame instead of one per row) and skipped the selection lookup for
+  empty selection sets.
+
 # 0.10.43
 
 ## Added
