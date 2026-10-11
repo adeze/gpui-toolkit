@@ -111,13 +111,14 @@ fn java_vm_safe() -> Result<&'static JavaVM, String> {
 /// not already attached).
 pub fn with_env<T>(f: impl FnOnce(&mut jni::Env) -> Result<T, String>) -> Result<T, String> {
     let vm = java_vm_safe()?;
-    let mut result: Option<Result<T, String>> = None;
-    vm.attach_current_thread(|env: &mut jni::Env| -> Result<(), jni::errors::Error> {
-        result = Some(f(env));
-        Ok(())
-    })
-    .map_err(|e: jni::errors::Error| e.to_string())?;
-    result.unwrap()
+    // Return the closure result through attach's own return channel. A pending
+    // Java exception (or a detach failure) makes attach return Err without a
+    // closure result; smuggling it out via Option plus unwrap turned that
+    // fallible boundary into a runner crash.
+    vm.attach_current_thread(
+        |env: &mut jni::Env| -> Result<Result<T, String>, jni::errors::Error> { Ok(f(env)) },
+    )
+    .map_err(|e: jni::errors::Error| e.to_string())?
 }
 
 /// Convenience alias: kept so existing callers that import `obtain_env`
