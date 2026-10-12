@@ -20,6 +20,7 @@ tempfile = { workspace = true }
 
 [dev-dependencies]
 toml = { workspace = true }
+gpui-release-gates = { workspace = true }
 
 [features]
 default = ["mobile"]

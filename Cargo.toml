@@ -381,13 +381,12 @@ codegen-units = 256
 [patch.crates-io]
 # SOTF owned maintenance forks; upstream 2.1.1, local version 2.1.2.
 
-# Bridge patch: the git scheduler rev still depends on backtrace 0.3
-# unconditionally, which does not compile on Apple mobile targets with
-# libc >= 0.2.190. Use the local checkout, which target-gates the dep
-# (see gpui/crates/scheduler/VENDORED.md). Remove this once the fix is
-# committed in sotf-3rdparties and the lock moves past it.
-[patch."https://github.com/pierreaubert/sotf-3rdparties"]
-sotf-gpui-toolkit-scheduler = { path = "../sotf-3rdparties/gpui/crates/scheduler" }
+# NOTE: a bridge [patch."https://github.com/pierreaubert/sotf-3rdparties"]
+# override for sotf-gpui-toolkit-scheduler used to live here, pointing at
+# ../sotf-3rdparties. It was removed when gpui-toolkit left all_of_sotf:
+# the backtrace cfg-gating fix is committed upstream (rev 54a6bf1, see
+# gpui/crates/scheduler/VENDORED.md there), so the git rev in Cargo.lock
+# already carries it and no local override is needed.
 
 # vello 0.10 requires crates-io wgpu/naga 29.0.3; unify with Zed's fork
 # (fork = upstream v29.0.3 + one internal wgpu-hal EGL patch, version-identical).

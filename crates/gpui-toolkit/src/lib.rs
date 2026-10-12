@@ -81,10 +81,11 @@ pub use gpui_release_gates::{
     ReleaseNotesEntry, ReleaseNotesReport, ReleaseNotesStatus, release_notes_artifact_report,
     release_notes_artifacts, release_notes_entries, release_notes_report,
 };
+#[doc(inline)]
 pub use gpui_release_gates::{
-    VENDORED_PATCH_REPORT_TYPE, VENDORED_PATCH_SCHEMA_VERSION, VendoredPatch,
-    VendoredPatchMaintenance, VendoredPatchManifest, VendoredPatchStatus, vendored_patch_manifest,
-    vendored_patches,
+    SOTF_THIRD_PARTIES_DIR_ENV, SOTF_THIRD_PARTIES_GIT_URL, VENDORED_PATCH_REPORT_TYPE,
+    VENDORED_PATCH_SCHEMA_VERSION, VendoredPatch, VendoredPatchMaintenance, VendoredPatchManifest,
+    VendoredPatchStatus, sotf_third_parties_dir, vendored_patch_manifest, vendored_patches,
 };
 
 #[cfg(feature = "platform")]

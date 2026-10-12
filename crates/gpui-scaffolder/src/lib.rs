@@ -1794,15 +1794,9 @@ mod tests {
     /// snapshot path; a git workspace reuses the exact git remote so Cargo
     /// unifies the renamed package instead of building path and git copies
     /// side by side (duplicate `gpui` crates break every shared trait impl).
-    fn local_gpui_dependency(
-        toolkit_root: &Path,
-        workspace_gpui: &toml::Table,
-    ) -> Result<String> {
+    fn local_gpui_dependency(toolkit_root: &Path, workspace_gpui: &toml::Table) -> Result<String> {
         let mut parts = Vec::new();
-        if let Some(package) = workspace_gpui
-            .get("package")
-            .and_then(toml::Value::as_str)
-        {
+        if let Some(package) = workspace_gpui.get("package").and_then(toml::Value::as_str) {
             parts.push(format!(r#"package = "{}""#, toml_string(package)));
         }
         if let Some(path) = workspace_gpui.get("path").and_then(toml::Value::as_str) {
@@ -1973,12 +1967,14 @@ mod tests {
 
     #[test]
     fn generated_gpui_tag_matches_vendored_revision() -> Result<()> {
-        // Runtime read: the snapshot provenance lives in the sibling
-        // sotf-3rdparties checkout, which a clean source archive does not
-        // contain, so it cannot be an include_str! asset (see
+        // Runtime read: the snapshot provenance lives in the
+        // sotf-3rdparties checkout backing this workspace (GitHub-sourced
+        // at the Cargo.lock revision), which a clean source archive does
+        // not contain, so it cannot be an include_str! asset (see
         // scripts/qa_embedded_assets.py).
-        let vendored_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../sotf-3rdparties/gpui/crates/gpui/VENDORED.md");
+        let third_parties = gpui_release_gates::sotf_third_parties_dir()
+            .context("locate the sotf-3rdparties checkout")?;
+        let vendored_path = third_parties.join("gpui/crates/gpui/VENDORED.md");
         let vendored = fs::read_to_string(&vendored_path)
             .with_context(|| format!("read {}", vendored_path.display()))?;
         let vendored_ref = vendored

@@ -2483,7 +2483,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-android"
-version = "0.10.6"
+version = "0.10.7"
 dependencies = [
  "accesskit",
  "android-activity",
@@ -2812,6 +2812,7 @@ version = "0.10.4"
 dependencies = [
  "anyhow",
  "clap",
+ "gpui-release-gates",
  "tempfile",
  "toml 1.1.6+spec-1.1.0",
 ]
@@ -6565,6 +6566,7 @@ dependencies = [
 [[package]]
 name = "sotf-gpui-toolkit-scheduler"
 version = "0.1.0"
+source = "git+https://github.com/pierreaubert/sotf-3rdparties#54a6bf14eaae8fd8bd465af522e980379fbdf43c"
 dependencies = [
  "async-task",
  "backtrace",

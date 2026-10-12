@@ -105,8 +105,9 @@ pub use stability::{
     AggregateFeature, CRATE_STABILITY_MANIFEST, CrateStability, PublishDecision, StabilityLevel,
     crate_stability_manifest,
 };
+#[doc(inline)]
 pub use vendored_patches::{
-    VENDORED_PATCH_REPORT_TYPE, VENDORED_PATCH_SCHEMA_VERSION, VendoredPatch,
-    VendoredPatchMaintenance, VendoredPatchManifest, VendoredPatchStatus, vendored_patch_manifest,
-    vendored_patches,
+    SOTF_THIRD_PARTIES_DIR_ENV, SOTF_THIRD_PARTIES_GIT_URL, VENDORED_PATCH_REPORT_TYPE,
+    VENDORED_PATCH_SCHEMA_VERSION, VendoredPatch, VendoredPatchMaintenance, VendoredPatchManifest,
+    VendoredPatchStatus, sotf_third_parties_dir, vendored_patch_manifest, vendored_patches,
 };

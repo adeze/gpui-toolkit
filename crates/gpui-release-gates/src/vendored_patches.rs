@@ -1,10 +1,119 @@
 //! Vendored dependency patch manifest for release QA.
 
+// Rust guideline compliant 2026-02-21
+
+use std::path::PathBuf;
+
 /// Schema version for [`VendoredPatchManifest`].
 pub const VENDORED_PATCH_SCHEMA_VERSION: u32 = 1;
 
 /// Stable report type identifier for [`VendoredPatchManifest`].
 pub const VENDORED_PATCH_REPORT_TYPE: &str = "gpui-toolkit-vendored-patches";
+
+/// GitHub source of the third-party dependency snapshots tracked below.
+pub const SOTF_THIRD_PARTIES_GIT_URL: &str = "https://github.com/pierreaubert/sotf-3rdparties";
+
+/// Environment override pointing at an explicit sotf-3rdparties checkout.
+///
+/// When set, [`sotf_third_parties_dir`] returns it verbatim. This covers
+/// developers working from a local clone, e.g. inside the `all_of_sotf`
+/// monorepo; standalone checkouts fall back to the cargo git checkout at
+/// the `Cargo.lock`-pinned revision.
+pub const SOTF_THIRD_PARTIES_DIR_ENV: &str = "SOTF_3RDPARTIES_DIR";
+
+/// Directory prefix cargo uses for the sotf-3rdparties git checkouts.
+///
+/// Cargo names git checkout roots `<url-last-segment>-<db-hash>`; the hash
+/// suffix is cargo-version specific, so only the prefix is matched.
+const SOTF_THIRD_PARTIES_CHECKOUT_PREFIX: &str = "sotf-3rdparties-";
+
+/// Provenance file every usable sotf-3rdparties checkout must contain.
+///
+/// Used as a sanity probe so a partial or unexpected checkout is never
+/// mistaken for the dependency source.
+const SOTF_THIRD_PARTIES_PROBE_PATH: &str = "gpui/crates/gpui/VENDORED.md";
+
+/// Locate the local sotf-3rdparties checkout backing this workspace.
+///
+/// Resolution order:
+/// 1. [`SOTF_THIRD_PARTIES_DIR_ENV`] when set.
+/// 2. The cargo git checkout (`$CARGO_HOME/git/checkouts/sotf-3rdparties-*/…`)
+///    matching the revision pinned in the workspace `Cargo.lock`.
+///
+/// Returns `None` when no usable checkout exists. In practice any build that
+/// compiled the git dependencies already materialized the checkout, so
+/// release-gate tests treat `None` as a hard failure rather than a skip.
+///
+/// # Examples
+///
+/// ```no_run
+/// let dir = gpui_release_gates::sotf_third_parties_dir();
+/// assert!(dir.is_some());
+/// ```
+pub fn sotf_third_parties_dir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os(SOTF_THIRD_PARTIES_DIR_ENV) {
+        return Some(PathBuf::from(dir));
+    }
+    let rev = cargo_lock_third_parties_rev()?;
+    for cargo_home in cargo_home_candidates() {
+        let Ok(entries) = std::fs::read_dir(cargo_home.join("git/checkouts")) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            if !name.starts_with(SOTF_THIRD_PARTIES_CHECKOUT_PREFIX) {
+                continue;
+            }
+            let Ok(revisions) = std::fs::read_dir(entry.path()) else {
+                continue;
+            };
+            for revision in revisions.flatten() {
+                let dir_name = revision.file_name();
+                let Some(dir_name) = dir_name.to_str() else {
+                    continue;
+                };
+                if !rev.starts_with(dir_name) {
+                    continue;
+                }
+                let candidate = revision.path();
+                if candidate.join(SOTF_THIRD_PARTIES_PROBE_PATH).is_file() {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Cargo home candidates in lookup order.
+fn cargo_home_candidates() -> Vec<PathBuf> {
+    let mut homes = Vec::new();
+    if let Some(home) = std::env::var_os("CARGO_HOME") {
+        homes.push(PathBuf::from(home));
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        homes.push(PathBuf::from(home).join(".cargo"));
+    }
+    homes
+}
+
+/// Revision of `sotf-3rdparties` pinned in the workspace `Cargo.lock`.
+fn cargo_lock_third_parties_rev() -> Option<String> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let lock = manifest_dir
+        .ancestors()
+        .map(|dir| dir.join("Cargo.lock"))
+        .find(|lock| lock.is_file())?;
+    let content = std::fs::read_to_string(lock).ok()?;
+    let prefix = format!("git+{SOTF_THIRD_PARTIES_GIT_URL}#");
+    content.lines().find_map(|line| {
+        let source = line.trim().strip_prefix("source = \"")?.strip_suffix('"')?;
+        source.strip_prefix(prefix.as_str()).map(str::to_string)
+    })
+}
 
 /// Whether a vendored directory is currently active in dependency resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,7 +161,8 @@ impl VendoredPatchMaintenance {
 pub struct VendoredPatch {
     /// Crate/package name.
     pub name: &'static str,
-    /// Local vendored directory relative to the repository root.
+    /// Vendored directory relative to the sotf-3rdparties checkout
+    /// (see [`sotf_third_parties_dir`]).
     pub local_path: &'static str,
     /// Upstream project URL.
     pub upstream: &'static str,
@@ -67,6 +177,7 @@ pub struct VendoredPatch {
     /// Observable condition under which this local copy must be removed.
     pub removal_condition: &'static str,
     /// Reproducible command used to inspect the local/upstream delta.
+    /// Run from the sotf-3rdparties checkout root.
     pub delta_evidence_command: &'static str,
     /// Current local version/ref.
     pub local_ref: &'static str,
@@ -81,7 +192,8 @@ pub struct VendoredPatch {
     /// Required verification before this patch can move to a release.
     pub verification_gate: &'static str,
     /// Human- or script-maintained provenance file (`VENDORING.md` for
-    /// hand-maintained crates, `VENDORED.md` for script-vendored crates).
+    /// hand-maintained crates, `VENDORED.md` for script-vendored crates),
+    /// relative to the sotf-3rdparties checkout.
     pub vendoring_doc: &'static str,
 }
 
@@ -133,14 +245,14 @@ impl VendoredPatchManifest {
 const VENDORED_PATCHES: &[VendoredPatch] = &[
     VendoredPatch {
         name: "block",
-        local_path: "../sotf-3rdparties/block",
+        local_path: "block",
         upstream: "https://github.com/SSheldon/rust-block",
         upstream_base: "block 0.1.6",
         owner: "platform-maintainers",
         last_reviewed: "2026-08-26",
         review_cadence_days: 90,
         removal_condition: "Remove when upstream block supports the workspace Rust toolchain without the retained changes.",
-        delta_evidence_command: "git diff block-0.1.6 -- ../sotf-3rdparties/block",
+        delta_evidence_command: "git diff block-0.1.6 -- block",
         local_ref: "0.1.6 active local patch",
         status: VendoredPatchStatus::ActivePatch,
         maintenance: VendoredPatchMaintenance::HandMaintained,
@@ -152,19 +264,19 @@ const VENDORED_PATCHES: &[VendoredPatch] = &[
             "Remove the unusable packaged objc_test_utils dev-dependency so the vendored manifest checks directly.",
             "Declare edition 2015 explicitly to keep the upstream default edition warning-free.",
         ],
-        verification_gate: "cargo check --manifest-path ../sotf-3rdparties/block/Cargo.toml --lib and cargo report future-incompatibilities after a dependent build.",
-        vendoring_doc: "../sotf-3rdparties/block/VENDORING.md",
+        verification_gate: "cargo check --manifest-path block/Cargo.toml --lib and cargo report future-incompatibilities after a dependent build.",
+        vendoring_doc: "block/VENDORING.md",
     },
     VendoredPatch {
         name: "gpui",
-        local_path: "../sotf-3rdparties/gpui/crates/gpui",
+        local_path: "gpui/crates/gpui",
         upstream: "https://github.com/zed-industries/zed",
         upstream_base: "crates/gpui at Zed v1.9.0",
         owner: "gpui-platform-maintainers",
         last_reviewed: "2026-08-07",
         review_cadence_days: 90,
         removal_condition: "Remove when the workspace tracks upstream gpui without local patch-table overrides.",
-        delta_evidence_command: "git diff v1.9.0 -- ../sotf-3rdparties/gpui/crates/gpui",
+        delta_evidence_command: "git diff v1.9.0 -- gpui/crates/gpui",
         local_ref: "0.2.2 script-vendored at Zed v1.9.0",
         status: VendoredPatchStatus::ActivePatch,
         maintenance: VendoredPatchMaintenance::ScriptVendored,
@@ -178,18 +290,18 @@ const VENDORED_PATCHES: &[VendoredPatch] = &[
             "stacksafe 1.0 replaces the future-incompatible proc-macro-error2 dependency chain without changing GPUI's StackSafe API usage.",
         ],
         verification_gate: "cargo check -p gpui and just lint-host; run the gpui svg_renderer font tests when renderer or font code changes.",
-        vendoring_doc: "../sotf-3rdparties/gpui/crates/gpui/VENDORED.md",
+        vendoring_doc: "gpui/crates/gpui/VENDORED.md",
     },
     VendoredPatch {
         name: "gpui_linux",
-        local_path: "../sotf-3rdparties/gpui/crates/gpui_linux",
+        local_path: "gpui/crates/gpui_linux",
         upstream: "https://github.com/zed-industries/zed",
         upstream_base: "crates/gpui_linux at Zed v1.9.0",
         owner: "linux-platform-maintainers",
         last_reviewed: "2026-07-18",
         review_cadence_days: 90,
         removal_condition: "Remove when the GPUI closure builds without a local patch-table override for this crate.",
-        delta_evidence_command: "git diff v1.9.0 -- ../sotf-3rdparties/gpui/crates/gpui_linux",
+        delta_evidence_command: "git diff v1.9.0 -- gpui/crates/gpui_linux",
         local_ref: "0.1.0 script-vendored at Zed v1.9.0",
         status: VendoredPatchStatus::ActivePatch,
         maintenance: VendoredPatchMaintenance::ScriptVendored,
@@ -199,18 +311,18 @@ const VENDORED_PATCHES: &[VendoredPatch] = &[
             "Restricted image crate features to GPUI's advertised bitmap formats.",
         ],
         verification_gate: "cargo check -p gpui_linux and just lint-host.",
-        vendoring_doc: "../sotf-3rdparties/gpui/crates/gpui_linux/VENDORED.md",
+        vendoring_doc: "gpui/crates/gpui_linux/VENDORED.md",
     },
     VendoredPatch {
         name: "gpui_macos",
-        local_path: "../sotf-3rdparties/gpui/crates/gpui_macos",
+        local_path: "gpui/crates/gpui_macos",
         upstream: "https://github.com/zed-industries/zed",
         upstream_base: "crates/gpui_macos at Zed v1.9.0",
         owner: "apple-platform-maintainers",
         last_reviewed: "2026-07-18",
         review_cadence_days: 90,
         removal_condition: "Remove when upstream gpui_macos drops the private CGS symbol references and the root patch table no longer needs this snapshot.",
-        delta_evidence_command: "git diff v1.9.0 -- ../sotf-3rdparties/gpui/crates/gpui_macos",
+        delta_evidence_command: "git diff v1.9.0 -- gpui/crates/gpui_macos",
         local_ref: "0.1.0 script-vendored at Zed v1.9.0 plus CGS patch",
         status: VendoredPatchStatus::ActivePatch,
         maintenance: VendoredPatchMaintenance::ScriptVendored,
@@ -221,18 +333,18 @@ const VENDORED_PATCHES: &[VendoredPatch] = &[
             "Standalone gpui dependency preserves Zed's default-features=false workspace policy and image features are limited to GPUI's advertised formats.",
         ],
         verification_gate: "cargo check -p gpui_macos, just lint-host, and macOS platform smoke tests for window/appearance changes.",
-        vendoring_doc: "../sotf-3rdparties/gpui/crates/gpui_macos/VENDORED.md",
+        vendoring_doc: "gpui/crates/gpui_macos/VENDORED.md",
     },
     VendoredPatch {
         name: "gpui_macros",
-        local_path: "../sotf-3rdparties/gpui/crates/gpui_macros",
+        local_path: "gpui/crates/gpui_macros",
         upstream: "https://github.com/zed-industries/zed",
         upstream_base: "crates/gpui_macros at Zed v1.9.0",
         owner: "gpui-platform-maintainers",
         last_reviewed: "2026-07-18",
         review_cadence_days: 90,
         removal_condition: "Remove when the GPUI closure builds without a local patch-table override for this crate.",
-        delta_evidence_command: "git diff v1.9.0 -- ../sotf-3rdparties/gpui/crates/gpui_macros",
+        delta_evidence_command: "git diff v1.9.0 -- gpui/crates/gpui_macros",
         local_ref: "0.1.0 script-vendored at Zed v1.9.0",
         status: VendoredPatchStatus::ActivePatch,
         maintenance: VendoredPatchMaintenance::ScriptVendored,
@@ -241,18 +353,18 @@ const VENDORED_PATCHES: &[VendoredPatch] = &[
             "#![allow(unexpected_cfgs)] at the tests/derive_inspector_reflection.rs crate root for the rust_analyzer cfg Zed sets for editor tooling.",
         ],
         verification_gate: "cargo check -p gpui_macros and just lint-host.",
-        vendoring_doc: "../sotf-3rdparties/gpui/crates/gpui_macros/VENDORED.md",
+        vendoring_doc: "gpui/crates/gpui_macros/VENDORED.md",
     },
     VendoredPatch {
         name: "gpui_web",
-        local_path: "../sotf-3rdparties/gpui/crates/gpui_web",
+        local_path: "gpui/crates/gpui_web",
         upstream: "https://github.com/zed-industries/zed",
         upstream_base: "crates/gpui_web at Zed v1.9.0",
         owner: "gpui-platform-maintainers",
         last_reviewed: "2026-08-15",
         review_cadence_days: 90,
         removal_condition: "Remove when the GPUI closure builds without a local patch-table override for this crate.",
-        delta_evidence_command: "git diff v1.9.0 -- ../sotf-3rdparties/gpui/crates/gpui_web",
+        delta_evidence_command: "git diff v1.9.0 -- gpui/crates/gpui_web",
         local_ref: "0.1.0 script-vendored at Zed v1.9.0 plus PR #61707 port",
         status: VendoredPatchStatus::ActivePatch,
         maintenance: VendoredPatchMaintenance::ScriptVendored,
@@ -263,18 +375,18 @@ const VENDORED_PATCHES: &[VendoredPatch] = &[
             "The remaining PR #61707 hunks (platform.rs DOM failure message, events.rs EventListenerHandle rework, window.rs fullscreen/clamp/handle hunks) and the on-demand frame_waker rework (upstream zed PR #62327) are deliberately not ported; documented as non-ported follow-ups in VENDORED.md.",
         ],
         verification_gate: "just wasm-check (nightly wasm32-unknown-unknown closure) and just lint-host; run just wasm-test for web platform changes.",
-        vendoring_doc: "../sotf-3rdparties/gpui/crates/gpui_web/VENDORED.md",
+        vendoring_doc: "gpui/crates/gpui_web/VENDORED.md",
     },
     VendoredPatch {
         name: "gpui_wgpu",
-        local_path: "../sotf-3rdparties/gpui/crates/gpui_wgpu",
+        local_path: "gpui/crates/gpui_wgpu",
         upstream: "https://github.com/zed-industries/zed",
         upstream_base: "crates/gpui_wgpu at Zed v1.9.0",
         owner: "rendering-maintainers",
         last_reviewed: "2026-10-04",
         review_cadence_days: 30,
         removal_condition: "Classify remaining source deltas, retain custom draws, then pass native/wasm/AU render gates with the replacement.",
-        delta_evidence_command: "git diff --no-index <Zed ced90fc/crates/gpui_wgpu> ../sotf-3rdparties/gpui/crates/gpui_wgpu",
+        delta_evidence_command: "git diff --no-index <Zed ced90fc/crates/gpui_wgpu> gpui/crates/gpui_wgpu",
         local_ref: "0.1.2 active local patch; tree 80f354219ed1f9cb5123546da4d4d4a8ff694f02 vs Zed 830b79b0110a44303a6f2c29bdf1c3c60fe59613",
         status: VendoredPatchStatus::ActivePatch,
         maintenance: VendoredPatchMaintenance::HandMaintained,
@@ -287,18 +399,18 @@ const VENDORED_PATCHES: &[VendoredPatch] = &[
             "Seven common Rust/WGSL source files and split text/renderer modules need classification before de-vendoring.",
         ],
         verification_gate: "cargo check -p gpui_wgpu and at least one renderer/showcase smoke pass for rendering changes.",
-        vendoring_doc: "../sotf-3rdparties/gpui/crates/gpui_wgpu/VENDORING.md",
+        vendoring_doc: "gpui/crates/gpui_wgpu/VENDORING.md",
     },
     VendoredPatch {
         name: "gpui_windows",
-        local_path: "../sotf-3rdparties/gpui/crates/gpui_windows",
+        local_path: "gpui/crates/gpui_windows",
         upstream: "https://github.com/zed-industries/zed",
         upstream_base: "crates/gpui_windows at Zed v1.9.0",
         owner: "windows-platform-maintainers",
         last_reviewed: "2026-10-04",
         review_cadence_days: 30,
         removal_condition: "Classify source deltas, retain scene/platform behavior, and pass native Windows compile and UI gates.",
-        delta_evidence_command: "git diff --no-index <Zed ced90fc/crates/gpui_windows> ../sotf-3rdparties/gpui/crates/gpui_windows",
+        delta_evidence_command: "git diff --no-index <Zed ced90fc/crates/gpui_windows> gpui/crates/gpui_windows",
         local_ref: "0.1.2 active local patch; tree e5bfb74d26de9ffa09b245c3d962dbbbe71668d7 vs Zed 356dd80ca8b943a04d67898c1ee6a1d792eb0d6f",
         status: VendoredPatchStatus::ActivePatch,
         maintenance: VendoredPatchMaintenance::HandMaintained,
@@ -309,18 +421,18 @@ const VENDORED_PATCHES: &[VendoredPatch] = &[
             "DirectX renderer handles PrimitiveBatch::Custom as a no-op; fourteen common source files plus build.rs differ from pinned Zed and need classification.",
         ],
         verification_gate: "cargo check -p gpui_windows --target x86_64-pc-windows-msvc plus native Windows smoke tests.",
-        vendoring_doc: "../sotf-3rdparties/gpui/crates/gpui_windows/VENDORING.md",
+        vendoring_doc: "gpui/crates/gpui_windows/VENDORING.md",
     },
     VendoredPatch {
         name: "http_client",
-        local_path: "../sotf-3rdparties/gpui/crates/http_client",
+        local_path: "gpui/crates/http_client",
         upstream: "https://github.com/zed-industries/zed",
         upstream_base: "crates/http_client at Zed v1.9.0",
         owner: "platform-maintainers",
         last_reviewed: "2026-07-18",
         review_cadence_days: 90,
         removal_condition: "Remove when the GPUI closure builds without a local patch-table override for this crate.",
-        delta_evidence_command: "git diff v1.9.0 -- ../sotf-3rdparties/gpui/crates/http_client",
+        delta_evidence_command: "git diff v1.9.0 -- gpui/crates/http_client",
         local_ref: "0.1.0 script-vendored at Zed v1.9.0",
         status: VendoredPatchStatus::ActivePatch,
         maintenance: VendoredPatchMaintenance::ScriptVendored,
@@ -329,18 +441,18 @@ const VENDORED_PATCHES: &[VendoredPatch] = &[
             "#![allow(clippy::new_without_default)] at the src/http_client.rs crate root (BlockedHttpClient::new).",
         ],
         verification_gate: "cargo check -p http_client and just lint-host.",
-        vendoring_doc: "../sotf-3rdparties/gpui/crates/http_client/VENDORED.md",
+        vendoring_doc: "gpui/crates/http_client/VENDORED.md",
     },
     VendoredPatch {
         name: "objc",
-        local_path: "../sotf-3rdparties/objc",
+        local_path: "objc",
         upstream: "https://github.com/SSheldon/rust-objc",
         upstream_base: "objc 0.2.7",
         owner: "apple-platform-maintainers",
         last_reviewed: "2026-10-08",
         review_cadence_days: 90,
         removal_condition: "Remove when upstream objc supports modern Rust and Apple targets without retained changes.",
-        delta_evidence_command: "git diff objc-0.2.7 -- ../sotf-3rdparties/objc",
+        delta_evidence_command: "git diff objc-0.2.7 -- objc",
         local_ref: "0.2.7 active local patch",
         status: VendoredPatchStatus::ActivePatch,
         maintenance: VendoredPatchMaintenance::HandMaintained,
@@ -354,18 +466,18 @@ const VENDORED_PATCHES: &[VendoredPatch] = &[
             "Rename the Cargo package to sotf-objc (lib target stays objc) with sotf-3rdparties repository metadata so the fork is publishable.",
         ],
         verification_gate: "cargo check -p sotf-objc, cargo test -p sotf-objc, and representative Apple/backend dependent checks.",
-        vendoring_doc: "../sotf-3rdparties/objc/VENDORING.md",
+        vendoring_doc: "objc/VENDORING.md",
     },
     VendoredPatch {
         name: "perf",
-        local_path: "../sotf-3rdparties/gpui/crates/perf",
+        local_path: "gpui/crates/perf",
         upstream: "https://github.com/zed-industries/zed",
         upstream_base: "tooling/perf at Zed v1.9.0",
         owner: "platform-maintainers",
         last_reviewed: "2026-07-18",
         review_cadence_days: 90,
         removal_condition: "Remove when the GPUI closure builds without a local patch-table override for this crate.",
-        delta_evidence_command: "git diff v1.9.0 -- ../sotf-3rdparties/gpui/crates/perf",
+        delta_evidence_command: "git diff v1.9.0 -- gpui/crates/perf",
         local_ref: "0.1.0 script-vendored at Zed v1.9.0",
         status: VendoredPatchStatus::ActivePatch,
         maintenance: VendoredPatchMaintenance::ScriptVendored,
@@ -374,18 +486,18 @@ const VENDORED_PATCHES: &[VendoredPatch] = &[
             "No local patches; pristine v1.9.0 snapshot modulo the import exclusions recorded in VENDORED.md.",
         ],
         verification_gate: "cargo check -p perf and just lint-host.",
-        vendoring_doc: "../sotf-3rdparties/gpui/crates/perf/VENDORED.md",
+        vendoring_doc: "gpui/crates/perf/VENDORED.md",
     },
     VendoredPatch {
         name: "scheduler",
-        local_path: "../sotf-3rdparties/gpui/crates/scheduler",
+        local_path: "gpui/crates/scheduler",
         upstream: "https://github.com/zed-industries/zed",
         upstream_base: "crates/scheduler at Zed v1.9.0",
         owner: "platform-maintainers",
         last_reviewed: "2026-10-08",
         review_cadence_days: 90,
         removal_condition: "Remove when the GPUI closure builds without a local patch-table override for this crate.",
-        delta_evidence_command: "git diff v1.9.0 -- ../sotf-3rdparties/gpui/crates/scheduler",
+        delta_evidence_command: "git diff v1.9.0 -- gpui/crates/scheduler",
         local_ref: "0.1.0 script-vendored at Zed v1.9.0",
         status: VendoredPatchStatus::ActivePatch,
         maintenance: VendoredPatchMaintenance::ScriptVendored,
@@ -396,18 +508,18 @@ const VENDORED_PATCHES: &[VendoredPatch] = &[
             "The backtrace dependency is target-gated off Apple mobile targets (ios, tvos, watchos, visionos), where backtrace 0.3 no longer compiles with libc >= 0.2.190; a cfg-gated module in src/test_scheduler.rs provides capture-less stand-ins so TestScheduler keeps its API.",
         ],
         verification_gate: "cargo test -p scheduler --all-targets, cargo check -p gpui --all-targets, and just lint-host.",
-        vendoring_doc: "../sotf-3rdparties/gpui/crates/scheduler/VENDORED.md",
+        vendoring_doc: "gpui/crates/scheduler/VENDORED.md",
     },
     VendoredPatch {
         name: "sum_tree",
-        local_path: "../sotf-3rdparties/gpui/crates/sum_tree",
+        local_path: "gpui/crates/sum_tree",
         upstream: "https://github.com/zed-industries/zed",
         upstream_base: "crates/sum_tree at Zed v1.9.0",
         owner: "platform-maintainers",
         last_reviewed: "2026-07-18",
         review_cadence_days: 90,
         removal_condition: "Remove when upstream sum_tree drops the GPL-3.0 ztracing/zlog dependencies or the closure no longer needs a local copy.",
-        delta_evidence_command: "git diff v1.9.0 -- ../sotf-3rdparties/gpui/crates/sum_tree",
+        delta_evidence_command: "git diff v1.9.0 -- gpui/crates/sum_tree",
         local_ref: "0.1.0 script-vendored at Zed v1.9.0 plus GPL patch",
         status: VendoredPatchStatus::ActivePatch,
         maintenance: VendoredPatchMaintenance::ScriptVendored,
@@ -418,18 +530,18 @@ const VENDORED_PATCHES: &[VendoredPatch] = &[
             "Dropped the GPL-3.0 ztracing/zlog dependencies from Cargo.toml.",
         ],
         verification_gate: "cargo check -p sum_tree, cargo test -p sum_tree, and just lint-host.",
-        vendoring_doc: "../sotf-3rdparties/gpui/crates/sum_tree/VENDORED.md",
+        vendoring_doc: "gpui/crates/sum_tree/VENDORED.md",
     },
     VendoredPatch {
         name: "util",
-        local_path: "../sotf-3rdparties/gpui/crates/util",
+        local_path: "gpui/crates/util",
         upstream: "https://github.com/zed-industries/zed",
         upstream_base: "crates/util at Zed v1.9.0",
         owner: "platform-maintainers",
         last_reviewed: "2026-07-18",
         review_cadence_days: 90,
         removal_condition: "Remove when the workspace no longer needs zed's async-process/async-task forks or a local util patch point.",
-        delta_evidence_command: "git diff v1.9.0 -- ../sotf-3rdparties/gpui/crates/util",
+        delta_evidence_command: "git diff v1.9.0 -- gpui/crates/util",
         local_ref: "0.1.0 script-vendored at Zed v1.9.0",
         status: VendoredPatchStatus::ActivePatch,
         maintenance: VendoredPatchMaintenance::ScriptVendored,
@@ -439,18 +551,18 @@ const VENDORED_PATCHES: &[VendoredPatch] = &[
             "Crate-root lint allows in src/util.rs for default clippy lints that fire on unmodified upstream code (inventory in VENDORED.md).",
         ],
         verification_gate: "cargo check -p util and just lint-host; re-verify the adopt_raw_pid call sites when moving the async-process/async-task patches.",
-        vendoring_doc: "../sotf-3rdparties/gpui/crates/util/VENDORED.md",
+        vendoring_doc: "gpui/crates/util/VENDORED.md",
     },
     VendoredPatch {
         name: "util_macros",
-        local_path: "../sotf-3rdparties/gpui/crates/util_macros",
+        local_path: "gpui/crates/util_macros",
         upstream: "https://github.com/zed-industries/zed",
         upstream_base: "crates/util_macros at Zed v1.9.0",
         owner: "platform-maintainers",
         last_reviewed: "2026-07-18",
         review_cadence_days: 90,
         removal_condition: "Remove when the GPUI closure builds without a local patch-table override for this crate.",
-        delta_evidence_command: "git diff v1.9.0 -- ../sotf-3rdparties/gpui/crates/util_macros",
+        delta_evidence_command: "git diff v1.9.0 -- gpui/crates/util_macros",
         local_ref: "0.1.0 script-vendored at Zed v1.9.0",
         status: VendoredPatchStatus::ActivePatch,
         maintenance: VendoredPatchMaintenance::ScriptVendored,
@@ -459,18 +571,18 @@ const VENDORED_PATCHES: &[VendoredPatch] = &[
             "#![allow(unexpected_cfgs)] at the src/util_macros.rs crate root for the perf_enabled cfg Zed sets via RUSTFLAGS.",
         ],
         verification_gate: "cargo check -p util_macros and just lint-host.",
-        vendoring_doc: "../sotf-3rdparties/gpui/crates/util_macros/VENDORED.md",
+        vendoring_doc: "gpui/crates/util_macros/VENDORED.md",
     },
     VendoredPatch {
         name: "zed-font-kit",
-        local_path: "../sotf-3rdparties/zed-font-kit",
+        local_path: "zed-font-kit",
         upstream: "https://github.com/zed-industries/font-kit",
         upstream_base: "rev 94b0f28166665e8fd2f53ff6d268a14955c82269",
         owner: "text-platform-maintainers",
         last_reviewed: "2026-10-04",
         review_cadence_days: 30,
         removal_condition: "Remove after Apple mobile cfg, bitmap/CSS behavior, and other source deltas are matched and platform gates pass.",
-        delta_evidence_command: "git diff --no-index <font-kit 94b0f28> ../sotf-3rdparties/zed-font-kit",
+        delta_evidence_command: "git diff --no-index <font-kit 94b0f28> zed-font-kit",
         local_ref: "0.14.1-zed active local patch; tree fd3baa7d0e1fc56f35dd1448e728fcee426d7842 vs upstream a9dd26e1b5f651d474b3ffe11a16f0c7471b9440",
         status: VendoredPatchStatus::ActivePatch,
         maintenance: VendoredPatchMaintenance::HandMaintained,
@@ -486,7 +598,7 @@ const VENDORED_PATCHES: &[VendoredPatch] = &[
             "Eight common source files and platform loader module layout differ from pinned font-kit and need classification.",
         ],
         verification_gate: "Direct zed-font-kit canvas tests, Apple mobile target checks for font consumers, and Linux fontconfig/FreeType checks when non-Apple font discovery changes.",
-        vendoring_doc: "../sotf-3rdparties/zed-font-kit/VENDORING.md",
+        vendoring_doc: "zed-font-kit/VENDORING.md",
     },
 ];
 
@@ -507,10 +619,17 @@ pub const fn vendored_patches() -> &'static [VendoredPatch] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::{Path, PathBuf};
 
-    fn repository_root() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    #[test]
+    fn sotf_third_parties_dir_resolves_the_locked_checkout() {
+        let dir = sotf_third_parties_dir().expect(
+            "locate the sotf-3rdparties checkout (set SOTF_3RDPARTIES_DIR or build the git dependencies first)",
+        );
+        assert!(
+            dir.join(SOTF_THIRD_PARTIES_PROBE_PATH).is_file(),
+            "sotf-3rdparties checkout lacks gpui provenance: {}",
+            dir.display()
+        );
     }
 
     #[test]
@@ -524,8 +643,8 @@ mod tests {
         for patch in manifest.patches {
             assert!(!patch.name.is_empty());
             assert!(
-                patch.local_path.starts_with("../sotf-3rdparties/"),
-                "patch {} escapes the third-party root: {}",
+                !patch.local_path.starts_with('/') && !patch.local_path.contains(".."),
+                "patch {} escapes the third-party checkout: {}",
                 patch.name,
                 patch.local_path
             );
@@ -568,20 +687,24 @@ mod tests {
 
     #[test]
     fn vendored_patch_manifest_matches_filesystem() {
-        let root = repository_root();
+        let third_parties = sotf_third_parties_dir().expect(
+            "locate the sotf-3rdparties checkout (set SOTF_3RDPARTIES_DIR or build the git dependencies first)",
+        );
 
         for patch in vendored_patches() {
             assert!(
-                root.join(patch.local_path).is_dir(),
-                "vendored path missing for {}: {}",
+                third_parties.join(patch.local_path).is_dir(),
+                "vendored path missing for {}: {} (third-party root: {})",
                 patch.name,
-                patch.local_path
+                patch.local_path,
+                third_parties.display()
             );
             assert!(
-                root.join(patch.vendoring_doc).is_file(),
-                "provenance doc missing for {}: {}",
+                third_parties.join(patch.vendoring_doc).is_file(),
+                "provenance doc missing for {}: {} (third-party root: {})",
                 patch.name,
-                patch.vendoring_doc
+                patch.vendoring_doc,
+                third_parties.display()
             );
             match patch.maintenance {
                 VendoredPatchMaintenance::ScriptVendored => assert!(
@@ -600,8 +723,9 @@ mod tests {
 
     #[test]
     fn every_vendored_crate_dir_has_manifest_entry() {
-        let repository = repository_root();
-        let third_parties = repository.join("../sotf-3rdparties");
+        let third_parties = sotf_third_parties_dir().expect(
+            "locate the sotf-3rdparties checkout (set SOTF_3RDPARTIES_DIR or build the git dependencies first)",
+        );
         // Vendored crates live at the third-party root (block, objc,
         // zed-font-kit) and under gpui/crates; both roots hold
         // provenance-bearing directories the manifest must cover.
@@ -610,7 +734,12 @@ mod tests {
         let mut missing = Vec::new();
 
         for scan_root in &scan_roots {
-            let entries = std::fs::read_dir(scan_root).expect("read vendored third-party dir");
+            let entries = std::fs::read_dir(scan_root).unwrap_or_else(|error| {
+                panic!(
+                    "read vendored third-party dir {}: {error}",
+                    scan_root.display()
+                )
+            });
             for entry in entries {
                 let directory = entry.expect("3rdparties dir entry").path();
                 if !directory.is_dir() {
