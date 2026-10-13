@@ -256,3 +256,8 @@ wasm-native-parity port="8081" *cases="":
 	uv run --with pillow --with playwright python3 scripts/qa_showcase_native_wasm.py \
 		--port {{port}} --manifest-json "$native_dir/manifest.json" --native-dir "$native_dir/metal/actual" \
 		${matrix_flags:+--cases $matrix_flags}
+
+
+[group('wasm')]
+wasm-upload:
+       rsync -arv --delete target/demo-site/* ovhspin:/var/www/html/gpui-toolkit-prod

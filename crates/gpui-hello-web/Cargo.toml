@@ -16,6 +16,8 @@ path = "src/main.rs"
 [dependencies]
 gpui = { workspace = true }
 gpui-miniapp = { workspace = true }
+gpui-ui-kit = { workspace = true }
+gpui-design = { workspace = true }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 js-sys = "0.3"

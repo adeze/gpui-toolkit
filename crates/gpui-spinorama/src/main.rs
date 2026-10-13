@@ -1,7 +1,4 @@
-//! Spinorama Showcase - speaker measurements with the gpui-px charting API.
-//!
-//! Renders CEA-2034 response curves and dispersion maps for a deterministic
-//! demo speaker (see `speaker.rs`).
+//! Full D3rs Spinorama viewer with live speaker measurements, polar and 3D views.
 //!
 //! Build/serve the wasm version via `just wasm-serve-spinorama` (Trunk, port 8084).
 #![cfg_attr(target_family = "wasm", no_main)]
@@ -9,11 +6,14 @@
 use gpui::*;
 use gpui_miniapp::{MiniApp, MiniAppConfig};
 
-mod showcase_app;
-mod speaker;
+mod api;
+mod app;
+mod render;
 mod spinorama_section;
+mod types;
+mod utils;
 
-use showcase_app::SpinoramaApp;
+use app::SpinoramaApp;
 
 fn run_app() {
     let config = MiniAppConfig::new("Spinorama Showcase")

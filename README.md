@@ -40,9 +40,15 @@ ui.vstack([
 
 ## Explore the toolkit
 
-The browser gallery is generated from the real WASM showcases. It includes
-curated feature snapshots, one featured example across every theme and
-design style, and links to the live demos.
+The browser landing page introduces the toolkit with separate paths for users
+and developers, direct links to all five live WASM demos, and Rust, `layout!`,
+and Python examples. Every demo has a browser menu for themes and design
+languages. The expandable catalog includes feature snapshots and theme/style
+variants generated from the real showcases.
+
+The [full Spinorama viewer](https://gpui-toolkit.spinorama.org/spinorama/?section=3d-surface&theme=dark)
+includes live speaker and measurement selection, CEA-2034 curves, polar
+directivity, contours, and interactive 3D surface and sphere views.
 
 | UI Kit · buttons | UI Kit · form controls | UI Kit · workflow |
 | --- | --- | --- |

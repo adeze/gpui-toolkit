@@ -11,3 +11,7 @@ load-bearing: the consumers below embed the files with `include_bytes!`.
 Keep the `fonts/` directory structure and filenames stable, or update every
 consumer in the same change. Both font families are distributed under SIL Open
 Font License 1.1; retain the accompanying license files when updating them.
+
+`gpui-miniapp` also embeds DejaVu Sans for Unicode chess pieces and registers
+the complete demo font set on native and web hosts. The headless visual harness
+uses this same set. DejaVu's license is retained at `fonts/dejavu/LICENSE`.

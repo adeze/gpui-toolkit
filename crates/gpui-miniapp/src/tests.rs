@@ -759,11 +759,11 @@ fn menu_refresh_skips_unchanged_checked_states() {
 
 #[test]
 fn bundled_ui_fonts_cover_wasm_set() {
-    // Same eight files the wasm platform registers: four IBM Plex Sans
-    // weights plus four Lilex weights. Guards the include paths and the
+    // Nine demo fonts: four IBM Plex Sans and four Lilex faces, plus
+    // DejaVu Sans for chess and other symbols. Guards the include paths and the
     // count native harnesses rely on for font parity.
     let fonts = bundled_ui_fonts();
-    assert_eq!(fonts.len(), 8);
+    assert_eq!(fonts.len(), 9);
     for font in &fonts {
         assert!(!font.is_empty());
     }

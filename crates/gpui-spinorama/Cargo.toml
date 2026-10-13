@@ -5,7 +5,7 @@ authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Spinorama-style speaker measurement showcase (CEA-2034 curves and dispersion)"
+description = "Full D3rs Spinorama viewer with live speaker measurements, polar, contour, and 3D views"
 publish = false
 
 [lints]
@@ -18,8 +18,20 @@ path = "src/main.rs"
 [dependencies]
 gpui = { workspace = true }
 gpui-miniapp = { workspace = true }
-gpui-px = { workspace = true, features = ["gpui", "gpu-2d", "vello"] }
 gpui-ui-kit = { workspace = true }
+d3rs = { package = "gpui-d3rs", path = "../gpui-d3rs", default-features = false, features = ["gpui", "gpu-2d", "gpu-3d", "vello-gpui"] }
+gpui-builder = { workspace = true }
+gpui-design = { workspace = true }
+ndarray = { version = "0.17", default-features = false }
+serde_json = { workspace = true }
+base64 = "0.22"
+urlencoding = { workspace = true }
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+tokio = { workspace = true }
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["Window", "Location", "Document", "Element"] }

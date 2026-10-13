@@ -31,6 +31,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from qa_chess_content import chess_content_errors
 from qa_wasm_screenshot import THRESHOLD, capture, diff_ratio  # noqa: E402
 
 EDGE_THRESHOLD = 24  # grayscale edge strength counted as an edge pixel
@@ -137,7 +138,10 @@ def main() -> int:
             print(f"error: no reference {args.reference}", file=sys.stderr)
             return 2
         out = out_dir / f"{args.name}.png"
-        report = capture(args.url, out, **common)
+        parts = urlsplit(args.url)
+        query = [(k, v) for k, v in parse_qsl(parts.query) if k != "qa"] + [("qa", "1")]
+        application_url = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+        report = capture(application_url, out, **common)
         ok = check_console(report, "wasm")
         pairs = [("wasm", out)]
         reference = Image.open(args.reference)
@@ -161,6 +165,16 @@ def main() -> int:
     first_n, second_n = normalize_pair(first.convert("RGB"), second.convert("RGB"))
     if first.size != second.size:
         print(f"note: normalized {first.size} vs {second.size} to {first_n.size}")
+    if dict(parse_qsl(urlsplit(args.url).query)).get("section") == "chess":
+        content_errors = [
+            f"{label}: {error}"
+            for label, image in ((pairs[0][0], first_n), (label, second_n))
+            for error in chess_content_errors(image)
+        ]
+        if content_errors:
+            for error in content_errors:
+                print(error, file=sys.stderr)
+            return 1
     ratio = diff_ratio(first_n, second_n)
     edge_ratio = edge_diff_ratio(first_n, second_n)
     bbox = changed_bbox(first_n, second_n)

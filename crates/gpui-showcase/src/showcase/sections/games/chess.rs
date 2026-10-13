@@ -2252,6 +2252,11 @@ impl ChessGame {
                 Scene2DTextAlign::Center,
                 None,
             );
+            // IBM Plex Sans and Lilex do not cover U+2654..U+265F. Use our
+            // embedded symbol face on every platform, including headless QA.
+            if let gpui_ui_kit::scene2d::Scene2DNodeKind::Text { font, .. } = &mut glyph.kind {
+                *font = Some("DejaVu Sans".into());
+            }
             glyph.transition = Some(transition(120));
             scene.nodes.push(glyph);
         }
@@ -2502,10 +2507,17 @@ mod tests {
             .iter()
             .filter(|node| node.id.starts_with("chess-piece-"))
         {
-            let Scene2DNodeKind::Text { origin, align, .. } = &node.kind else {
+            let Scene2DNodeKind::Text {
+                origin,
+                align,
+                font,
+                ..
+            } = &node.kind
+            else {
                 panic!("{} should be a text node", node.id);
             };
             assert_eq!(*align, Scene2DTextAlign::Center);
+            assert_eq!(font.as_deref(), Some("DejaVu Sans"));
             let row: usize = node.id["chess-piece-".len()..]
                 .split('-')
                 .next()

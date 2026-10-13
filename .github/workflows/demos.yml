@@ -10,9 +10,17 @@ on:
       - "crates/gpui-d3rs/**"
       - "crates/gpui-spinorama/**"
       - "crates/gpui-miniapp/**"
+      - "crates/gpui-hello-web/**"
+      - "crates/assets/fonts/**"
       - "../sotf-3rdparties/gpui/crates/gpui_web/**"
       - "scripts/build_wasm_demo_gallery.py"
       - "scripts/qa_wasm_screenshot.py"
+      - "scripts/qa_spinorama_browser.py"
+      - "scripts/serve_demo_site.py"
+      - "scripts/qa_chess_content.py"
+      - "scripts/qa_showcase_native_wasm.py"
+      - "scripts/qa_wasm_renderer_parity.py"
+      - "scripts/tests/**"
       - "docs/demos/**"
       - "builds/wasm.just"
       - ".github/workflows/demos.yml"
@@ -60,8 +68,22 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-wasm-gallery-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Test gallery and visual QA checks
+        env:
+          PYTHONPATH: scripts
+        run: |
+          uv run --with pillow --with playwright python -m unittest discover -s scripts/tests -p 'test_*wasm*.py'
+          uv run --with pillow --with playwright python -m unittest discover -s scripts/tests -p 'test_qa_chess_content.py'
+
       - name: Build live WASM routes
         run: just wasm-build-site
+
+      - name: Verify full Spinorama browser content and 3D interaction
+        run: |
+          python3 scripts/serve_demo_site.py --port 8090 > /tmp/gpui-demo-server.log 2>&1 &
+          demo_server_pid=$!
+          trap 'kill "$demo_server_pid"' EXIT
+          uv run --with pillow --with playwright python scripts/qa_spinorama_browser.py
 
       - name: Capture snapshots and generate gallery
         run: just wasm-gallery

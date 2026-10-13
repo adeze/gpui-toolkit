@@ -68,7 +68,7 @@
     {
       "id": "spinorama",
       "title": "Spinorama Showcase",
-      "description": "CEA-2034 response curves and speaker dispersion maps rendered with gpui-px charts.",
+      "description": "Explore real speakers with CEA-2034 curves, polar directivity, contours, 3D surfaces, and sphere views.",
       "route": "spinorama/",
       "source_url": "https://github.com/pierreaubert/gpui-toolkit/tree/main/crates/gpui-spinorama",
       "port": 8084,
@@ -102,8 +102,8 @@
     "px-contour-desktop",
     "d3rs-d3-volcano-desktop",
     "d3rs-geo-desktop",
+    "spinorama-3d-surface-desktop",
     "spinorama-cea-2034-desktop",
-    "spinorama-dispersion-desktop",
     "hello"
   ]
 }

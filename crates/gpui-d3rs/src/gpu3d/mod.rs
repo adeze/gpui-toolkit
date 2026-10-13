@@ -56,17 +56,9 @@ pub mod projection_tests;
 
 /// Whether a wgpu custom draw submitted this frame can reach the screen.
 ///
-/// False on renderers that silently drop `WgpuCustomDraw` (notably macOS
-/// Metal) and on wasm, where the web backend never sets the probe. Callers
-/// use this to pick a fallback: screen-space text instead of billboards,
-/// and (native only) a blocking readback blit instead of the custom draw.
+/// False on renderers that drop `WgpuCustomDraw` (notably macOS Metal).
+/// The browser wgpu backend sets this probe once its shared GPU context is ready.
+/// Callers use a blocking readback fallback only on native targets.
 pub(crate) fn gpu_custom_draw_available() -> bool {
-    #[cfg(target_arch = "wasm32")]
-    {
-        false
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        gpui::wgpu_custom_draw_available()
-    }
+    gpui::wgpu_custom_draw_available()
 }

@@ -1,59 +1,22 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(super) enum SpinoramaSection {
-    #[default]
-    Overview,
-    Cea2034,
-    Horizontal,
-    Vertical,
-    Dispersion,
-    Contour,
-}
+pub(super) use crate::types::PlotSection as SpinoramaSection;
 
-impl SpinoramaSection {
-    pub(super) fn all() -> &'static [SpinoramaSection] {
-        &[
-            SpinoramaSection::Overview,
-            SpinoramaSection::Cea2034,
-            SpinoramaSection::Horizontal,
-            SpinoramaSection::Vertical,
-            SpinoramaSection::Dispersion,
-            SpinoramaSection::Contour,
-        ]
-    }
-
-    pub(super) fn label(&self) -> &'static str {
-        match self {
-            SpinoramaSection::Overview => "Overview",
-            SpinoramaSection::Cea2034 => "CEA-2034",
-            SpinoramaSection::Horizontal => "Horizontal SPL",
-            SpinoramaSection::Vertical => "Vertical SPL",
-            SpinoramaSection::Dispersion => "Dispersion",
-            SpinoramaSection::Contour => "Contour",
-        }
-    }
-
-    pub(super) fn description(&self) -> &'static str {
-        match self {
-            SpinoramaSection::Overview => {
-                "Spinorama-style speaker measurements rendered with gpui-px charts."
+pub(super) fn initial_section() -> SpinoramaSection {
+    #[cfg(target_family = "wasm")]
+    let requested = gpui_miniapp::web_query_param("section");
+    #[cfg(not(target_family = "wasm"))]
+    let requested = std::env::var("SPINORAMA_SHOWCASE_SECTION").ok();
+    requested
+        .and_then(|name| {
+            let key = name.to_ascii_lowercase();
+            match key.as_str() {
+                "overview" | "cea-2034" | "cea2034" => Some(SpinoramaSection::CEA2034),
+                "dispersion" | "contour" => Some(SpinoramaSection::Contour),
+                _ => SpinoramaSection::all()
+                    .into_iter()
+                    .find(|s| slug(s.label()) == key || s.label().eq_ignore_ascii_case(&name)),
             }
-            SpinoramaSection::Cea2034 => {
-                "CEA-2034 response curves: on-axis, listening window, early reflections, sound power, and predicted in-room response."
-            }
-            SpinoramaSection::Horizontal => {
-                "Horizontal off-axis SPL from -90 to +90 degrees; high frequencies narrow while bass stays omnidirectional."
-            }
-            SpinoramaSection::Vertical => {
-                "Vertical off-axis SPL showing the symmetric narrowing of the demo speaker."
-            }
-            SpinoramaSection::Dispersion => {
-                "Full horizontal dispersion map: SPL over frequency and angle."
-            }
-            SpinoramaSection::Contour => {
-                "Directivity contour bands at 10 dB steps from 40 to 90 dB SPL."
-            }
-        }
-    }
+        })
+        .unwrap_or_default()
 }
 
 /// Emit the capture inventory consumed by the shared browser gallery tool.
@@ -90,7 +53,11 @@ pub(super) fn visual_manifest_json() -> String {
     let capture_count = sections.len() * VIEWPORTS.len();
     let mut capture_index = 0;
     for section in sections {
-        let section_slug = slug(section.label());
+        let section_slug = if section == SpinoramaSection::CEA2034 {
+            "cea-2034".into()
+        } else {
+            slug(section.label())
+        };
         for (viewport_id, viewport_label, width, height, scale_factor) in VIEWPORTS {
             capture_index += 1;
             let comma = if capture_index == capture_count {
@@ -110,7 +77,6 @@ pub(super) fn visual_manifest_json() -> String {
     json
 }
 
-#[cfg(not(target_family = "wasm"))]
 fn slug(label: &str) -> String {
     let mut output = String::new();
     let mut pending_dash = false;
@@ -145,6 +111,6 @@ mod tests {
             SpinoramaSection::all().len() * 2
         );
         assert!(manifest.contains("\"id\": \"cea-2034-desktop\""));
-        assert!(manifest.contains("\"id\": \"dispersion-narrow\""));
+        assert!(manifest.contains("\"id\": \"3d-surface-narrow\""));
     }
 }

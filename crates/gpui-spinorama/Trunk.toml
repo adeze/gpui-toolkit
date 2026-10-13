@@ -6,3 +6,9 @@ addresses = ["127.0.0.1"]
 port = 8084
 open = true
 headers = { "Cross-Origin-Embedder-Policy" = "require-corp", "Cross-Origin-Opener-Policy" = "same-origin" }
+
+# The measurement API does not send CORS headers. Browser requests use the
+# same-origin proxy, matching the production nginx location.
+[[proxy]]
+backend = "https://api.spinorama.org/v1/"
+rewrite = "/api/spinorama/v1/"

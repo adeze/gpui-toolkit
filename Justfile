@@ -838,7 +838,7 @@ update-pre-commit:
 
 [group('maintenance')]
 xcode:
-		xcodebuild -downloadComponent MetalToolchain
+	xcodebuild -downloadComponent MetalToolchain
 
 # ----------------------------------------------------------------------
 # DOWNLOAD

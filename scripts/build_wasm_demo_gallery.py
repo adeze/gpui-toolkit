@@ -17,6 +17,7 @@ import subprocess
 import sys
 from html import escape
 from pathlib import Path
+from string import Template
 from urllib.parse import urlencode
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -219,6 +220,7 @@ def capture_entries(
 ) -> list[str]:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from qa_wasm_screenshot import capture
+    from qa_chess_content import chess_content_errors
 
     failures = []
     for entry in entries:
@@ -248,7 +250,8 @@ def capture_entries(
             settle_ms=settle_ms,
             viewport=(entry["width"], entry["height"]),
             device_scale_factor=entry["scale_factor"],
-            ready_selector="html[data-gpui-ready='true']",
+            ready_selector=("html[data-spinorama-state='loaded']" if entry["app_id"] == "spinorama"
+                            else "html[data-gpui-ready='true']"),
             screenshot_timeout_ms=10_000,
         )
         if report["canvas_width"] <= 0 or not report["ready"] or not report["screenshot"]:
@@ -256,6 +259,10 @@ def capture_entries(
                 f"{entry['id']}: canvas={report['canvas_width']} ready={report['ready']} "
                 f"screenshot={report['screenshot']} console={report['console'][-2:]}"
             )
+        if entry["section"] == "chess" and report["screenshot"]:
+            from PIL import Image
+            with Image.open(output) as image:
+                failures.extend(f"{entry['id']}: {error}" for error in chess_content_errors(image))
         print(
             f"captured {entry['id']} {entry['width']}x{entry['height']}@{entry['scale_factor']} "
             f"canvas={report['canvas_width']}x{report['canvas_height']}"
@@ -323,7 +330,7 @@ def write_site(catalog: dict, entries: list[dict], output: Path) -> None:
         if not image_path.exists():
             image_path = output / entry["image"]
         if not image_path.exists():
-            return '<div class="placeholder">Capture pending</div>'
+            return '<div class="placeholder">Explore live ↗</div>'
         return (
             f'<img loading="lazy" src="{escape(str(image_path.relative_to(output)))}" '
             f'alt="{escape(entry["app_title"] + " — " + entry["section_label"])}">'
@@ -350,7 +357,7 @@ def write_site(catalog: dict, entries: list[dict], output: Path) -> None:
         availability = "" if entry.get("available") else " missing"
         rendered_cards.append(
             f'<article class="card{availability}" data-search="{escape((entry["app_title"] + " " + entry["section_label"] + " " + entry["group"]).lower())}">'
-            f'<a class="image" href="{escape(entry["image"])}">{media_for(entry)}</a>'
+            f'<a class="image" href="{escape(entry.get("live_url") or entry["image"])}">{media_for(entry)}</a>'
             f'<div class="meta"><p class="eyebrow">{escape(entry["app_title"])} · {escape(entry["viewport_label"])}</p>'
             f'<h2>{escape(entry["section_label"])}</h2><p>{escape(entry["app_description"])}</p>{live}{variant} {source}</div></article>'
         )
@@ -375,44 +382,27 @@ def write_site(catalog: dict, entries: list[dict], output: Path) -> None:
         )
     else:
         featured_html = ""
-    html = f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{escape(catalog['title'])}</title>
-  <style>
-    :root {{ color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #101018; color: #f4f2f7; }}
-    body {{ max-width: 1480px; margin: 0 auto; padding: 48px 28px 80px; background: radial-gradient(circle at top right, #2a2044, transparent 40%), #101018; }}
-    header {{ max-width: 820px; margin-bottom: 34px; }} h1 {{ font-size: clamp(2.2rem, 5vw, 4.5rem); line-height: .98; margin: 0 0 18px; }}
-    header p {{ color: #c8c1d4; font-size: 1.1rem; line-height: 1.5; }}
-    .toolbar {{ display:flex; gap:12px; flex-wrap:wrap; margin:28px 0; }} input {{ background:#1b1a27; border:1px solid #464052; border-radius:10px; color:inherit; padding:12px 14px; min-width:280px; }}
-    .grid {{ display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap:18px; }}
-    .card {{ overflow:hidden; background:rgba(28,27,40,.9); border:1px solid #393448; border-radius:16px; box-shadow:0 12px 36px rgba(0,0,0,.2); }} .card.missing {{ opacity:.5; }}
-    .image {{ display:block; aspect-ratio: 4 / 3; background:#0a0a0f; }} .image img {{ width:100%; height:100%; object-fit:contain; display:block; }} .placeholder {{ height:100%; display:grid; place-items:center; color:#8e879c; font-size:.9rem; }}
-    .meta {{ padding:16px 18px 18px; }} .eyebrow {{ color:#b6a4ef; font-size:.75rem; text-transform:uppercase; letter-spacing:.08em; }} h2 {{ margin:5px 0 8px; font-size:1.3rem; }} .meta p {{ color:#c8c1d4; line-height:1.4; }}
-    .live, .source {{ color:#d7c9ff; font-weight:600; margin-right:12px; }} .variant {{ color:#8e879c; font-size:.8rem; }}
-    .featured {{ margin:8px 0 42px; }} .featured h2 {{ font-size:1.6rem; margin:0 0 6px; }} .featured h3 {{ font-size:.8rem; text-transform:uppercase; letter-spacing:.08em; color:#b6a4ef; margin:20px 0 10px; }}
-    .tiles {{ display:grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap:12px; }}
-    .tile {{ display:block; background:rgba(28,27,40,.9); border:1px solid #393448; border-radius:12px; overflow:hidden; text-decoration:none; }} .tile:hover {{ border-color:#6f6391; }}
-    .tile-image {{ display:block; aspect-ratio: 8 / 5; background:#0a0a0f; }} .tile-image img {{ width:100%; height:100%; object-fit:cover; display:block; }} .tile-image .placeholder {{ height:100%; }}
-    .tile-label {{ display:block; padding:8px 12px 10px; color:#d7c9ff; font-size:.85rem; font-weight:600; }}
-    .count {{ color:#aaa2b9; }}
-  </style>
-</head>
-<body>
-  <header><p class="eyebrow">GPUI Toolkit · generated gallery</p><h1>{escape(catalog['title'])}</h1><p>{escape(catalog['description'])}</p><p class="count">{len(base_entries)} catalog entries · generated from Rust showcase inventories</p></header>
-  {featured_html}
-  <div class="toolbar"><input id="search" type="search" placeholder="Filter demos…" aria-label="Filter demos"><span id="count" class="count"></span></div>
-  <main id="gallery" class="grid">{"".join(rendered_cards)}</main>
-  <script>
-    const input = document.querySelector('#search'); const cards = [...document.querySelectorAll('.card')]; const count = document.querySelector('#count');
-    function update() {{ const q = input.value.toLowerCase().trim(); let shown = 0; cards.forEach(card => {{ const visible = !q || card.dataset.search.includes(q); card.hidden = !visible; if (visible) shown++; }}); count.textContent = `${{shown}} demos`; }}
-    input.addEventListener('input', update); update();
-  </script>
-</body>
-</html>
-"""
+    app_cards = []
+    for index, app in enumerate(catalog["apps"], 1):
+        preview = next((entry for entry in featured if entry["app_id"] == app["id"]), None)
+        if preview is None:
+            preview = next((entry for entry in base_entries if entry["app_id"] == app["id"]), None)
+        media = media_for(preview) if preview else '<div class="placeholder">↗</div>'
+        route = escape(app["route"])
+        source = escape(app.get("source_url", "https://github.com/pierreaubert/gpui-toolkit"))
+        app_cards.append(
+            f'<article class="app"><a class="app-preview" href="{route}" aria-label="Open {escape(app["title"])}">{media}</a>'
+            f'<div class="app-meta"><span class="eyebrow">{index:02d} / LIVE DEMO</span>'
+            f'<h3>{escape(app["title"])}</h3><p>{escape(app["description"])}</p>'
+            f'<a href="{route}">Launch demo ↗</a><a class="source" href="{source}">Source ↗</a></div></article>'
+        )
+    assets = REPO_ROOT / "docs/demos"
+    for name in ("landing.css", "landing.js"):
+        shutil.copy2(assets / name, output / name)
+    html = Template((assets / "landing.html").read_text(encoding="utf-8")).substitute(
+        apps="".join(app_cards), cards="".join(rendered_cards),
+        variants=featured_html, count=len(base_entries),
+    )
     (output / "index.html").write_text(html, encoding="utf-8")
 
 
@@ -493,6 +483,7 @@ def main() -> int:
     copied = copy_images(entries, args.capture_root.resolve(), output)
     build_thumbnails(entries, output)
     write_site(catalog, entries, output)
+    shutil.copyfile(REPO_ROOT / "docs/demos/spinorama-nginx.conf", output / "spinorama-nginx.conf")
     if args.readme_snippet:
         write_readme_snippet(catalog, entries, args.readme_snippet.resolve())
     base_count = sum(1 for entry in entries if "variant_kind" not in entry)

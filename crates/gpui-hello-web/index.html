@@ -1,5 +1,5 @@
 <!doctype html>
-<html>
+<html lang="en" data-demo="hello">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -23,13 +23,15 @@
       }
       @keyframes gpui-spin { to { transform: rotate(360deg); } }
     </style>
+    <link data-trunk rel="copy-file" href="../../docs/demos/demo-shell.js" />
   </head>
   <body>
+    <script src="./demo-shell.js"></script>
     <div id="gpui-splash" aria-hidden="true">
       <div class="spinner"></div>
       <div>Loading Hello WebGPU…</div>
     </div>
-    <script src="/wasm-scheduling-baseline.js"></script>
+    <script src="./wasm-scheduling-baseline.js"></script>
     <script>
       // Remove the splash as soon as the app marks itself ready for automation
       // (gpui_miniapp::web_mark_ready sets html[data-gpui-ready]).

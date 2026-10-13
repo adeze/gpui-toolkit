@@ -9,7 +9,20 @@ use std::rc::Rc;
 /// publishable consumers don't have to declare them. Examples and demos that
 /// need a custom `Application::with_platform(...)` should call this helper
 /// instead of inlining the cfg-cascade themselves.
+///
+/// # Errors
+/// Returns an error if the backend cannot initialize or bundled fonts cannot register.
 pub fn current_platform() -> Result<Rc<dyn gpui::Platform>, String> {
+    let platform = current_platform_backend()?;
+    // Make symbol coverage explicit on native, browser, and embedded hosts.
+    platform
+        .text_system()
+        .add_fonts(bundled_ui_fonts())
+        .map_err(|error| format!("failed to register demo fonts: {error}"))?;
+    Ok(platform)
+}
+
+fn current_platform_backend() -> Result<Rc<dyn gpui::Platform>, String> {
     #[cfg(target_os = "macos")]
     {
         Ok(Rc::new(gpui_macos::MacPlatform::new(false)))
@@ -169,8 +182,8 @@ pub fn web_mark_ready() {
 
 /// Bundled UI font data shared by every `MiniApp` shell.
 ///
-/// Returns the eight embedded IBM Plex Sans and Lilex files in the same
-/// set the wasm platform registers, so native harnesses can resolve the
+/// Returns the embedded IBM Plex Sans, Lilex, and DejaVu Sans files in the same
+/// set the demo platform registers, so native harnesses can resolve the
 /// identical families instead of falling back to system fonts (which
 /// changes glyph widths, line wrapping, and therefore layout).
 ///
@@ -184,6 +197,7 @@ pub fn web_mark_ready() {
 /// ```
 pub fn bundled_ui_fonts() -> Vec<Cow<'static, [u8]>> {
     vec![
+        Cow::Borrowed(include_bytes!("../../assets/fonts/dejavu/DejaVuSans.ttf").as_slice()),
         Cow::Borrowed(
             include_bytes!("../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf").as_slice(),
         ),

@@ -62,6 +62,8 @@ fn demo_view_label(view: DemoView) -> &'static str {
 mod imp {
     use super::{DemoView, boot_error_text, demo_view_from_param, demo_view_label};
     use gpui::*;
+    use gpui_design::{DesignSystem, DesignSystemState};
+    use gpui_ui_kit::theme::{ThemeExt, ThemeState};
     use wasm_bindgen::JsCast;
 
     struct HelloWeb {
@@ -69,18 +71,25 @@ mod imp {
     }
 
     impl Render for HelloWeb {
-        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let theme = cx.theme();
+            let design = &cx.global::<DesignSystemState>().system;
             let mut root = div()
                 .size_full()
-                .bg(rgb(0x1e1e2e))
+                .bg(theme.background)
                 .flex()
                 .flex_col()
                 .items_center()
                 .justify_center()
                 .gap_4()
-                .text_color(rgb(0xffffff));
+                .text_color(theme.text_primary);
             if self.view != DemoView::Text {
-                root = root.child(div().size(px(64.0)).bg(rgb(0xf38ba8)).rounded(px(8.0)));
+                root = root.child(
+                    div()
+                        .size(px(64.0))
+                        .bg(theme.accent)
+                        .rounded(px(design.corners.md)),
+                );
             }
             if self.view != DemoView::Quad {
                 root = root.child(format!(
@@ -180,6 +189,12 @@ mod imp {
         // returns an `ApplicationHandle` owning the app.
         let handle =
             gpui::Application::with_platform(platform).run_embedded(move |cx: &mut App| {
+                cx.set_global(ThemeState::with_variant(gpui_miniapp::web_initial_theme()));
+                let language = gpui_miniapp::web_initial_design_style()
+                    .unwrap_or(gpui_design::DesignLanguage::Neutral);
+                cx.set_global(DesignSystemState::with_system(DesignSystem::for_language(
+                    language,
+                )));
                 let bounds = Bounds::centered(None, size(px(640.), px(560.)), cx);
                 if let Err(error) = cx.open_window(
                     WindowOptions {

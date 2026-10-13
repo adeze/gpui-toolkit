@@ -27,7 +27,7 @@ class NativeWasmParityTests(unittest.TestCase):
     def test_section_url(self):
         self.assertEqual(
             self.mod.section_url(8081, "form-controls", "dark", "neutral"),
-            "http://127.0.0.1:8081/?section=form-controls&theme=dark&style=neutral",
+            "http://127.0.0.1:8081/?section=form-controls&theme=dark&style=neutral&qa=1",
         )
 
     def test_px_diff_identical_is_zero(self):

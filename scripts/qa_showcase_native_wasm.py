@@ -29,6 +29,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from qa_chess_content import chess_content_errors
 from qa_wasm_screenshot import BrowserSession  # noqa: E402
 
 PX_CHANNEL_SUM_TOL = 90
@@ -62,9 +63,10 @@ EXPECTED_CONSOLE_ERRORS = {
 }
 
 
-def section_url(port: int, slug: str, theme: str, design: str) -> str:
-    query = urlencode({"section": slug, "theme": theme, "style": design})
-    return f"http://127.0.0.1:{port}/?{query}"
+def section_url(port: int, slug: str, theme: str, design: str, base_url: str | None = None) -> str:
+    query = urlencode({"section": slug, "theme": theme, "style": design, "qa": "1"})
+    base = (base_url or f"http://127.0.0.1:{port}").rstrip("/")
+    return f"{base}/?{query}"
 
 
 def px_diff_ratio(a, b) -> float:
@@ -144,6 +146,7 @@ def block_corr(a, b, block: int = 20) -> float:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--url", help="base URL for a built showcase subroute")
     parser.add_argument("--manifest-json", type=Path, required=True)
     parser.add_argument("--native-dir", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, default=Path("target/qa/wasm-native"))
@@ -214,12 +217,13 @@ def main() -> int:
                     return 2
                 out = args.out_dir / f"{case['id']}-wasm.png"
                 report = session.capture(
-                    section_url(args.port, case["section"], args.theme, args.design),
+                    section_url(args.port, case["section"], args.theme, args.design, args.url),
                     out,
                     wait_ms=args.wait_ms,
                     click_texts=[],
                     click_xys=[],
                     settle_ms=args.settle_ms,
+                    ready_selector="html[data-gpui-ready='true']",
                 )
                 errors = [line for line in report["console"] if "[pageerror]" in line or "[ERROR]" in line]
                 if errors:
@@ -233,9 +237,17 @@ def main() -> int:
                 px = px_diff_ratio(native, wasm)
                 iou = edge_iou(native, wasm)
                 corr = block_corr(native, wasm)
+                content_errors = []
+                if case["section"] == "chess":
+                    for label, screenshot in (("native", native), ("wasm", wasm)):
+                        content_errors.extend(f"{label}: {error}" for error in chess_content_errors(screenshot))
+                    for error in content_errors:
+                        print(f"[{case['id']}] {error}", file=sys.stderr)
                 verdict = "pass"
                 unexpected_errors = errors and case["id"] not in EXPECTED_CONSOLE_ERRORS
-                if unexpected_errors or px > args.px_gate or iou < args.iou_gate or corr < args.corr_gate:
+                unusable = not report["ready"] or not report["screenshot"] or report["canvas_width"] <= 0
+                if (content_errors or unusable or unexpected_errors
+                        or px > args.px_gate or iou < args.iou_gate or corr < args.corr_gate):
                     verdict = "FAIL"
                     failed += 1
                 rows.append((case["id"], px, iou, corr, verdict))

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Build expressive GPUI applications with Rust or Python. Explore live components, charts, games, and speaker measurements.">
+<title>GPUI Toolkit — One toolkit. Every screen.</title>
+<link rel="stylesheet" href="landing.css">
+</head>
+<body>
+<nav class="nav" aria-label="Main navigation"><a class="brand" href="#">gpui<span> / toolkit</span></a><div><a href="#demos">Demos</a><a href="#developers">Developers</a><a href="https://github.com/pierreaubert/gpui-toolkit">GitHub ↗</a></div></nav>
+<main>
+<section class="hero">
+<div class="hero-copy"><p class="eyebrow"><span class="dot"></span> Rust · Python · Native · WebGPU</p><h1>One toolkit.<br>Every <em>screen.</em></h1><p class="intro">From a tiny button to a world of data.<br>Expressive interfaces, interactive charts, and platform-aware design. Built with GPUI.</p><div class="actions"><a class="primary" href="#demos">Try the demos <span>↗</span></a><a class="secondary" href="#developers">Build something →</a></div><p class="platforms">macOS / Windows / Linux / iOS / tvOS / Android / Web</p></div>
+<div class="hero-art" aria-label="A preview of toolkit charts and components"><div class="art-top"><span class="dot"></span> THE TOOLKIT, IN ACTION <span>01 / LIVE</span></div><div class="signal"><svg viewBox="0 0 600 260" role="img" aria-label="Illustrative signal curves"><defs><pattern id="grid" width="50" height="40" patternUnits="userSpaceOnUse"><path d="M 50 0 L 0 0 0 40" fill="none" stroke="#ffffff15"/></pattern></defs><rect width="600" height="260" fill="url(#grid)"/><path class="curve" d="M0 210 C50 210 30 40 100 100 S160 240 220 110 S270 30 330 100 S400 230 460 95 S550 60 600 120" fill="none" stroke="#d4fa72" stroke-width="4"/><path d="M0 230 C70 230 60 110 130 145 S200 245 260 150 S320 85 380 160 S450 220 500 145 S570 125 600 155" fill="none" stroke="#99aaff" stroke-width="2"/><circle cx="330" cy="100" r="7" fill="#d4fa72"/></svg><div class="signal-caption"><span>DATA, WITH DIMENSION</span><a href="px/?section=scatter&theme=dark&style=neutral">Explore charts ↗</a></div></div><div class="art-bottom"><div><span class="tiny">COMPONENTS</span><div class="sample-controls"><span class="sample-button">Let's go ↗</span><span class="sample-toggle" aria-hidden="true"></span></div><a href="showcase/?section=buttons&theme=dark&style=neutral">Meet the UI kit →</a></div><div class="art-chess"><span aria-hidden="true">♜ ♞ ♝</span><a href="showcase/?section=chess&theme=dark&style=neutral">Make your move ↗</a></div></div></div>
+</section>
+<section class="audiences" aria-label="Choose your path"><a href="#demos"><span class="eyebrow">01 / FOR EXPLORERS</span><h2>See it. Touch it. Try it. ↗</h2><p>Open a demo, play a game, explore a chart. Switch themes and design languages to make it yours.</p></a><a href="#developers"><span class="eyebrow">02 / FOR DEVELOPERS</span><h2>Your next app starts here. ↗</h2><p>Reusable components, charting primitives, layout tools, and the same UI from Rust, layout! or Python.</p></a></section>
+<section id="demos"><div class="section-heading"><div><p class="eyebrow">THE PLAYGROUND</p><h2>Small controls.<br>Big possibilities.</h2></div><p>These are real GPUI applications running in your browser.<br>Pick a playground and dive in.</p></div><div class="app-grid">$apps</div><div class="quick-links"><span>Jump straight in</span><a href="showcase/?section=chess&theme=dark&style=neutral">Chess ↗</a><a href="showcase/?section=workflow&theme=dark&style=neutral">Workflow ↗</a><a href="px/?section=heatmap&theme=dark&style=neutral">Heatmap ↗</a><a href="d3rs/?section=geo&theme=dark&style=neutral">Maps ↗</a><a href="spinorama/?section=3d-surface&theme=dark&style=neutral">Speaker 3D ↗</a></div><p class="browser-note">Browser demos use WebGPU. Open them in a current browser with WebGPU enabled.</p></section>
+<section id="developers" class="developers"><div><p class="eyebrow">BUILD WITH THE TOOLKIT</p><h2>Same UI.<br>Your language.</h2><p>Native div-based rendering. Reusable UI and audio controls. D3-inspired primitives and Plotly Express-style charts. Adaptive design tokens and constraint-based layouts.</p><div class="actions"><a class="primary" href="https://github.com/pierreaubert/gpui-toolkit#readme">Read the README ↗</a><a href="https://github.com/pierreaubert/gpui-toolkit/blob/main/TUTORIAL.md">Follow the tutorial →</a></div><p class="browser-note">Pre-1.0, open source. See the <a href="https://github.com/pierreaubert/gpui-toolkit/blob/main/RELEASE.md">release guide</a> for package availability.</p></div><div class="code-panel"><div class="code-tabs" role="tablist" aria-label="Code language"><button role="tab" aria-selected="true" aria-controls="rust" id="tab-rust">Rust</button><button role="tab" aria-selected="false" aria-controls="layout" id="tab-layout" tabindex="-1">layout!</button><button role="tab" aria-selected="false" aria-controls="python" id="tab-python" tabindex="-1">Python</button></div><pre role="tabpanel" id="rust" aria-labelledby="tab-rust"><code><span class="code-muted">use</span> gpui::div;
+<span class="code-muted">use</span> gpui_ui_kit::{Button, ButtonVariant, VStack};
+
+VStack::new()
+    .child(div().child(<span class="code-green">"Hi"</span>))
+    .child(Button::new(<span class="code-green">"go", "Go"</span>)
+        .variant(ButtonVariant::Primary))</code></pre><pre role="tabpanel" id="layout" aria-labelledby="tab-layout" hidden><code><span class="code-muted">use</span> gpui_ui_kit_macros::layout;
+
+layout! {
+    V {
+        Tx <span class="code-green">"Hi"</span>,
+        B.primary(<span class="code-green">"Go"</span>) #go,
+    }
+}</code></pre><pre role="tabpanel" id="python" aria-labelledby="tab-python" hidden><code><span class="code-muted">from</span> gpui_toolkit <span class="code-muted">import</span> ui
+
+ui.vstack([
+    ui.text(<span class="code-green">"Hi"</span>),
+    ui.button(<span class="code-green">"Go"</span>, id=<span class="code-green">"go"</span>, action=<span class="code-green">"app.go"</span>),
+])</code></pre><div class="code-footer">ONE TOOLKIT / THREE WAYS TO BUILD</div></div></section>
+<section class="ecosystem"><p class="eyebrow">OUT IN THE WORLD</p><h2>See what people build.</h2><p><a href="https://github.com/pierreaubert/sotf">Sound of the Future ↗</a> — an audio application built with this toolkit. <a href="https://github.com/pierreaubert/stkopt">StkOpt ↗</a> — a smaller open source example.</p></section>
+<details class="catalog"><summary>Explore the complete demo catalog <span>$count entries ↓</span></summary>$variants<div class="toolbar"><label for="search">Find a demo</label><input id="search" type="search" placeholder="Buttons, chess, scatter…"><span id="count" aria-live="polite"></span></div><div id="gallery" class="grid">$cards</div></details>
+</main><footer><a class="brand" href="#">gpui<span> / toolkit</span></a><span>Open source. Built to be explored.</span><a href="https://github.com/pierreaubert/gpui-toolkit">Source ↗</a></footer>
+<script src="landing.js"></script>
+</body></html>
