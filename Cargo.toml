@@ -19,6 +19,7 @@ members = [
     "crates/gpui-python-runtime",
     "crates/gpui-release-gates",
     "crates/gpui-scaffolder",
+    "crates/gpui-spinorama",
     "crates/gpui-showcase",
     "crates/gpui-showcase/android",
     "crates/gpui-showcase/tvos",

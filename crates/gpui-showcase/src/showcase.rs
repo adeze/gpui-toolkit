@@ -1002,8 +1002,10 @@ impl Render for ShowcaseSidebar {
                             .hover(move |style| style.bg(surface_hover_color));
                     }
 
-                    nav_items = nav_items.child(item.child(section.label()).on_mouse_down(
-                        MouseButton::Left,
+                    // Tap (click) selects; a drag that releases over another item
+                    // fires no click, so touch-drag scrolling coexists with
+                    // selection. See the touch-to-wheel shim in index.html.
+                    nav_items = nav_items.child(item.child(section.label()).on_click(
                         move |_event, window, cx| {
                             if let Some(parent) = parent.upgrade() {
                                 parent.update(cx, |this, cx| {
@@ -1021,7 +1023,7 @@ impl Render for ShowcaseSidebar {
                                     }
                                 }
                             }
-                        },
+                        }
                     ));
                 }
             }

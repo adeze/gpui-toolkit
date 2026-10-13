@@ -45,6 +45,46 @@
       ]
     },
     {
+      "id": "d3rs",
+      "title": "d3rs Showcase",
+      "description": "D3.js-inspired scales, shapes, geo, hierarchy, force, and Observable examples.",
+      "route": "d3rs/",
+      "source_url": "https://github.com/pierreaubert/gpui-toolkit/tree/main/crates/gpui-d3rs",
+      "port": 8083,
+      "manifest_command": [
+        "cargo",
+        "run",
+        "-p",
+        "gpui-d3rs",
+        "--features",
+        "vello-gpui",
+        "--example",
+        "d3rs-showcase",
+        "--",
+        "--visual-manifest",
+        "--json"
+      ]
+    },
+    {
+      "id": "spinorama",
+      "title": "Spinorama Showcase",
+      "description": "CEA-2034 response curves and speaker dispersion maps rendered with gpui-px charts.",
+      "route": "spinorama/",
+      "source_url": "https://github.com/pierreaubert/gpui-toolkit/tree/main/crates/gpui-spinorama",
+      "port": 8084,
+      "manifest_command": [
+        "cargo",
+        "run",
+        "-p",
+        "gpui-spinorama",
+        "--bin",
+        "spinorama-showcase",
+        "--",
+        "--visual-manifest",
+        "--json"
+      ]
+    },
+    {
       "id": "hello",
       "title": "Hello WebGPU",
       "description": "The minimal GPUI-on-WASM smoke demo.",
@@ -60,6 +100,10 @@
     "px-scatter-desktop",
     "px-heatmap-desktop",
     "px-contour-desktop",
+    "d3rs-d3-volcano-desktop",
+    "d3rs-geo-desktop",
+    "spinorama-cea-2034-desktop",
+    "spinorama-dispersion-desktop",
     "hello"
   ]
 }

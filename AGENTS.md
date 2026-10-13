@@ -13,12 +13,13 @@ The `gpui-toolkit` workspace contains several related crates for building GPUI a
 | `gpui-showcase` | Component showcase with a wasm/browser entry point (gpui_web + gpui_wgpu canvas) | `just wasm-serve-showcase` |
 | `gpui-px` (px-showcase) | Chart showcase with a wasm/browser entry point | `just wasm-serve-px` |
 | `gpui-builder` | Generic constraint-based layout solver — priority collapse, auto-axis, display tiers, dividers | [README](gpui-builder/README.md) |
-| `gpui-d3rs` | Low-level D3.js-inspired visualization primitives, incl. vello-backed 2D rasterization (`vello2d` module, zero-copy via `WgpuCustomDraw`, vello_cpu fallback) | [README](gpui-d3rs/README.md) |
+| `gpui-d3rs` | Low-level D3.js-inspired visualization primitives, incl. vello-backed 2D rasterization (`vello2d` module, zero-copy via `WgpuCustomDraw`, vello_cpu fallback); `d3rs-showcase` example doubles as the wasm demo (route `/d3rs/`) | [README](gpui-d3rs/README.md) |
 | `gpui-design` | Platform-adaptive design system (Apple HIG, Material 3, Fluent, Neutral) — spacing, corners, typography, animation | [README](gpui-design/README.md) |
 | `gpui-ios` | iOS platform backend (Metal rendering, touch, text) | [README](gpui-ios/README.md), [AGENTS.md](gpui-ios/AGENTS.md) |
 | `gpui-pretext` | High-performance text measurement and multiline layout (Rust port of chenglou/pretext) | [README](gpui-pretext/README.md) |
 | `gpui-profiler` | Lightweight allocation profiling utilities for interactive UI hot paths | [README](gpui-profiler/README.md) |
 | `gpui-px` | High-level Plotly Express-style charting API, including unstructured `MeshPlot` | [README](gpui-px/README.md) |
+| `gpui-spinorama` | Spinorama-style speaker measurement showcase (CEA-2034 + dispersion, wasm route `/spinorama/`) | this repo, `just wasm-serve-spinorama` |
 | `gpui-themes` | Theme editor and management infrastructure | [AGENTS.md](gpui-themes/AGENTS.md) |
 | `gpui-ui-kit` | Reusable UI components (buttons, forms, layout) with ARIA accessibility support | [lib.rs](gpui-ui-kit/src/lib.rs), [AGENTS.md](crates/gpui-ui-kit/AGENTS.md) |
 | `gpui-ui-kit-macros` | Procedural macros for theme derivation and the `layout!` DSL | [README](gpui-ui-kit-macros/README.md) |
@@ -180,6 +181,8 @@ just wasm-check
 just wasm-serve-hello      # http://127.0.0.1:8080
 just wasm-serve-showcase   # http://127.0.0.1:8081
 just wasm-serve-px         # http://127.0.0.1:8082
+just wasm-serve-d3rs       # http://127.0.0.1:8083
+just wasm-serve-spinorama  # http://127.0.0.1:8084
 
 # Headless-Chrome smoke test + visual diff
 just wasm-test

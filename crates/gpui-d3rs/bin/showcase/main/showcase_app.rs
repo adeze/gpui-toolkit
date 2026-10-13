@@ -103,6 +103,11 @@ pub struct ShowcaseApp {
     last_mouse_move_alloc: AllocSnapshot,
     last_sample: Option<(&'static str, AllocSnapshot)>,
     last_window_size: Option<Size<Pixels>>,
+    // Sidebar divider: manual width override (None = solver-driven), the
+    // last rendered width (drag baseline), and the in-progress drag.
+    sidebar_width_override: Option<f32>,
+    last_sidebar_width: f32,
+    divider_drag: Option<(f32, f32)>,
     // Snapshot state
     pub snapshot_mode: bool,
     pub snapshot_list: Vec<DemoSection>,
@@ -134,6 +139,31 @@ impl ShowcaseApp {
         self.renderer_selection().2
     }
 
+    fn section_key(value: &str) -> String {
+        value
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .map(|character| character.to_ascii_lowercase())
+            .collect()
+    }
+
+    /// Optional initial-section override for browser capture, matched
+    /// case-insensitively against `DemoSection::label()` or its slug.
+    fn initial_section() -> DemoSection {
+        #[cfg(target_family = "wasm")]
+        let requested = gpui_miniapp::web_query_param("section");
+        #[cfg(not(target_family = "wasm"))]
+        let requested = std::env::var("D3RS_SHOWCASE_SECTION").ok();
+
+        requested
+            .and_then(|name| {
+                DemoSection::all()
+                    .into_iter()
+                    .find(|s| Self::section_key(s.label()) == Self::section_key(name.trim()))
+            })
+            .unwrap_or_default()
+    }
+
     pub(super) fn new(_cx: &mut Context<Self>) -> Self {
         let args: Vec<String> = std::env::args().collect();
         let snapshot_mode = args.iter().any(|arg| arg == "--snapshot");
@@ -147,7 +177,7 @@ impl ShowcaseApp {
         }
 
         Self {
-            current_section: DemoSection::default(),
+            current_section: Self::initial_section(),
             content_width: 700.0,
             content_height: 600.0,
             // Geo demo defaults
@@ -261,6 +291,9 @@ impl ShowcaseApp {
             last_mouse_move_alloc: AllocSnapshot::default(),
             last_sample: None,
             last_window_size: None,
+            sidebar_width_override: None,
+            last_sidebar_width: 0.0,
+            divider_drag: None,
             snapshot_mode,
             snapshot_list: DemoSection::all(),
             snapshot_index: 0,
@@ -396,8 +429,6 @@ impl ShowcaseApp {
             .id("sidebar-scroll")
             .h_full()
             .bg(theme.surface)
-            .border_r_1()
-            .border_color(theme.border)
             .flex()
             .flex_col()
             .overflow_y_scroll()
@@ -823,19 +854,58 @@ impl Render for ShowcaseApp {
             self.record_sample("resize");
         }
 
-        let sidebar_width = self.solve_layout(w, h);
+        // Solver-driven width, bounded so a misreported window size (for
+        // example DPR emulation skewing `window.bounds()` on web) can never
+        // stretch the menu across the screen: the relative cap only binds
+        // when the solver answer exceeds 35% of the width. A divider drag
+        // overrides the automatic width.
+        let auto_width = self
+            .solve_layout(w, h)
+            .clamp(120.0, 300.0)
+            .min(0.35 * w.max(1.0));
+        let sidebar_width = self.sidebar_width_override.unwrap_or(auto_width);
+        self.last_sidebar_width = sidebar_width;
         let ds = cx.design();
         self.content_width = (w - sidebar_width - ds.spacing.section_gap * 4.0).max(400.0);
         self.content_height = (h - ds.spacing.section_gap * 4.0).max(300.0);
+
+        let theme = cx.theme().clone();
+        let divider_hover = theme.surface_hover;
+        let divider = div()
+            .id("d3rs-sidebar-divider")
+            .w(px(9.0))
+            .h_full()
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(theme.surface)
+            .cursor_ew_resize()
+            .hover(move |style| style.bg(divider_hover))
+            .child(div().w(px(1.0)).h_full().bg(theme.border))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseDownEvent, _window, _cx| {
+                    let x: f32 = event.position.x.into();
+                    this.divider_drag = Some((x, this.last_sidebar_width));
+                }),
+            );
 
         let result = div()
             .id("d3rs-showcase-root")
             .relative()
             .size_full()
+            .bg(theme.background)
             .flex()
             .flex_row()
-            .on_mouse_move(cx.listener(|this, _event, _window, _cx| {
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _window, cx| {
                 this.last_mouse_move_alloc = this.record_sample("mouse-move");
+                if let Some((start_x, start_width)) = this.divider_drag {
+                    let x: f32 = event.position.x.into();
+                    this.sidebar_width_override =
+                        Some((start_width + (x - start_x)).clamp(120.0, 480.0));
+                    cx.notify();
+                }
             }))
             .on_mouse_down(
                 MouseButton::Left,
@@ -846,13 +916,21 @@ impl Render for ShowcaseApp {
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|this, _event, _window, _cx| {
+                    this.divider_drag = None;
                     this.record_sample("mouse-up");
+                }),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _event, _window, _cx| {
+                    this.divider_drag = None;
                 }),
             )
             .on_scroll_wheel(cx.listener(|this, _event, _window, _cx| {
                 this.record_sample("scroll");
             }))
             .child(self.render_sidebar(sidebar_width, cx))
+            .child(divider)
             .child(self.render_content(cx));
 
         self.last_render_alloc = self.record_sample("render");

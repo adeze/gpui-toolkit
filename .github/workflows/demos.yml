@@ -7,6 +7,8 @@ on:
     paths:
       - "crates/gpui-showcase/**"
       - "crates/gpui-px/**"
+      - "crates/gpui-d3rs/**"
+      - "crates/gpui-spinorama/**"
       - "crates/gpui-miniapp/**"
       - "../sotf-3rdparties/gpui/crates/gpui_web/**"
       - "scripts/build_wasm_demo_gallery.py"

@@ -1,0 +1,97 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>d3rs Showcase (wasm)</title>
+    <link data-trunk rel="rust" data-bindgen-target="web" />
+    <style>
+      html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #101018; }
+      canvas { display: block; width: 100%; height: 100%; touch-action: none; user-select: none; outline: none; }
+      #gpui-splash {
+        position: fixed; inset: 0; display: flex; flex-direction: column; gap: 16px;
+        align-items: center; justify-content: center; background: #101018; color: #c8c1d4;
+        font: 16px/1.4 Inter, ui-sans-serif, system-ui, sans-serif; pointer-events: none;
+        transition: opacity 0.25s ease-out;
+      }
+      #gpui-splash.done { opacity: 0; }
+      #gpui-splash .spinner {
+        width: 36px; height: 36px; border-radius: 50%;
+        border: 3px solid #393448; border-top-color: #b6a4ef;
+        animation: gpui-spin 0.9s linear infinite;
+      }
+      @keyframes gpui-spin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+    <div id="gpui-splash" aria-hidden="true">
+      <div class="spinner"></div>
+      <div>Loading d3rs Showcase…</div>
+    </div>
+    <script>
+      // Remove the splash as soon as the app marks itself ready for automation
+      // (gpui_miniapp::web_mark_ready sets html[data-gpui-ready]).
+      (function () {
+        var splash = document.getElementById('gpui-splash');
+        if (!splash) return;
+        function done() {
+          splash.classList.add('done');
+          setTimeout(function () { splash.remove(); }, 300);
+        }
+        if (document.documentElement.getAttribute('data-gpui-ready') === 'true') { done(); return; }
+        new MutationObserver(function (mutations, observer) {
+          if (document.documentElement.getAttribute('data-gpui-ready') === 'true') {
+            observer.disconnect();
+            done();
+          }
+        }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-gpui-ready'] });
+        // Never trap the user behind the splash if the marker never arrives.
+        setTimeout(function () { if (splash.isConnected) done(); }, 60000);
+      })();
+      // Touch-drag scrolling: the GPUI canvas sets touch-action:none and only
+      // scrolls on wheel events, so single-finger drags are re-emitted as
+      // wheel events at the touch point. Sign matches native touch scrolling
+      // (drag up moves content up).
+      (function () {
+        var last = null;
+        function onStart(e) {
+          if (e.touches.length === 1) {
+            var t = e.touches[0];
+            last = { x: t.clientX, y: t.clientY, id: t.identifier };
+          } else {
+            last = null;
+          }
+        }
+        function onMove(e) {
+          if (!last) return;
+          var t = null;
+          for (var i = 0; i < e.changedTouches.length; i++) {
+            if (e.changedTouches[i].identifier === last.id) { t = e.changedTouches[i]; break; }
+          }
+          if (!t) return;
+          if (e.cancelable) e.preventDefault();
+          var dx = last.x - t.clientX;
+          var dy = last.y - t.clientY;
+          last = { x: t.clientX, y: t.clientY, id: t.identifier };
+          if (dx === 0 && dy === 0) return;
+          var canvas = document.querySelector('canvas');
+          if (!canvas) return;
+          canvas.dispatchEvent(new WheelEvent('wheel', {
+            deltaX: dx, deltaY: dy, clientX: t.clientX, clientY: t.clientY,
+            bubbles: true, cancelable: true
+          }));
+        }
+        function onEnd(e) {
+          if (!last) return;
+          for (var i = 0; i < e.changedTouches.length; i++) {
+            if (e.changedTouches[i].identifier === last.id) { last = null; break; }
+          }
+        }
+        window.addEventListener('touchstart', onStart, { passive: true });
+        window.addEventListener('touchmove', onMove, { passive: false });
+        window.addEventListener('touchend', onEnd, { passive: true });
+        window.addEventListener('touchcancel', onEnd, { passive: true });
+      })();
+    </script>
+  </body>
+</html>

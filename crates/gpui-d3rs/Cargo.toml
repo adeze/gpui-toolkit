@@ -110,9 +110,20 @@ gpui-ui-kit = { path = "../gpui-ui-kit", default-features = false }
 gpui-miniapp = { workspace = true }
 gpui-builder = { workspace = true }
 approx = { workspace = true }
-criterion = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+# criterion (rayon) cannot build for wasm32-unknown-unknown; it is only used
+# by the native benches, so keep it off the browser target where the
+# d3rs-showcase example is built as a Trunk WASM app.
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+criterion = { workspace = true }
+
+# The d3rs-showcase example doubles as the browser demo (Trunk builds it via
+# `[build] example = "d3rs-showcase"`); examples resolve dev-dependencies, so
+# the wasm entry point's bindgen import lives here.
+[target.'cfg(target_family = "wasm")'.dev-dependencies]
+wasm-bindgen = "0.2"
 
 [[bench]]
 name = "force_many_body"

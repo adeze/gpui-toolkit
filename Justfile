@@ -394,7 +394,7 @@ build-python:
 alias demos := demo
 
 [group('demo')]
-demo: demo-audio-kit demo-builder demo-component-lab demo-d3rs demo-px demo-python demo-showcase demo-themes demo-ui-kit
+demo: demo-audio-kit demo-builder demo-component-lab demo-d3rs demo-px demo-python demo-showcase demo-spinorama demo-themes demo-ui-kit
 
 [group('demo')]
 demo-audio-kit:
@@ -429,6 +429,10 @@ demo-python:
 [group('demo')]
 demo-showcase:
 	{{cargo}} build --release --bin gpui-showcase -p gpui-showcase
+
+[group('demo')]
+demo-spinorama:
+	{{cargo}} build --release --bin spinorama-showcase -p gpui-spinorama
 
 [group('demo')]
 demo-themes:

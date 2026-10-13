@@ -6,7 +6,7 @@
 # ----------------------------------------------------------------------
 
 wasm_target := "wasm32-unknown-unknown"
-wasm_packages := "-p sotf-gpui-toolkit-gpui-web -p gpui-miniapp -p gpui-hello-web -p gpui-showcase -p gpui-px -p gpui-d3rs"
+wasm_packages := "-p sotf-gpui-toolkit-gpui-web -p gpui-miniapp -p gpui-hello-web -p gpui-showcase -p gpui-px -p gpui-d3rs -p gpui-spinorama"
 
 # `wasm-build-site` produces release artifacts first, while `trunk serve
 # --release` serves the browser capture servers. Two apps can still build
@@ -35,6 +35,14 @@ wasm-serve-showcase:
 [group('wasm')]
 wasm-serve-px:
 	cd crates/gpui-px && env -u NO_COLOR RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort trunk serve
+
+[group('wasm')]
+wasm-serve-d3rs:
+	cd crates/gpui-d3rs && env -u NO_COLOR RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort trunk serve
+
+[group('wasm')]
+wasm-serve-spinorama:
+	cd crates/gpui-spinorama && env -u NO_COLOR RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort trunk serve
 
 # Screenshot a served wasm app and diff against qa/visual/wasm/baselines/<name>.png.
 # Positional args: `just wasm-visual hello 8080 gpui-hello-web` (defaults: showcase).
@@ -69,13 +77,13 @@ wasm-visual name="showcase" port="8081" dir="gpui-showcase" record="" click_x=""
 	fi
 	uv run --with pillow --with playwright python3 scripts/qa_wasm_screenshot.py --url "http://127.0.0.1:{{port}}" --name {{name}} $record_flag ${click_flags[@]+"${click_flags[@]}"}
 
-# Build the three browser demos beneath target/demo-site so the generated
+# Build the browser demos beneath target/demo-site so the generated
 # gallery can publish both snapshots and live WASM routes.
 [group('wasm')]
 wasm-build-site:
 	#!/usr/bin/env bash
 	set -euo pipefail
-	mkdir -p target/demo-site/hello target/demo-site/showcase target/demo-site/px
+	mkdir -p target/demo-site/hello target/demo-site/showcase target/demo-site/px target/demo-site/d3rs target/demo-site/spinorama
 	assert_wasm_public_url() {
 		local dist="$1"
 		local public_url="$2"
@@ -98,6 +106,12 @@ wasm-build-site:
 	cd ../gpui-px
 	env -u NO_COLOR RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort trunk build --release --public-url /px/ --dist ../../target/demo-site/px
 	assert_wasm_public_url ../../target/demo-site/px /px/
+	cd ../gpui-d3rs
+	env -u NO_COLOR RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort trunk build --release --public-url /d3rs/ --dist ../../target/demo-site/d3rs
+	assert_wasm_public_url ../../target/demo-site/d3rs /d3rs/
+	cd ../gpui-spinorama
+	env -u NO_COLOR RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort trunk build --release --public-url /spinorama/ --dist ../../target/demo-site/spinorama
+	assert_wasm_public_url ../../target/demo-site/spinorama /spinorama/
 
 # Capture every query-addressable showcase section, then generate thumbnails,
 # featured theme/style variants, manifest.json, and the static gallery index.
@@ -122,7 +136,15 @@ wasm-gallery only="":
 		cd crates/gpui-px
 		env -u NO_COLOR RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort trunk serve --release --port 8082 --open=false --no-autoreload
 	) & pids+=("$!")
-	for port in 8081 8082; do
+	(
+		cd crates/gpui-d3rs
+		env -u NO_COLOR RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort trunk serve --release --port 8083 --open=false --no-autoreload
+	) & pids+=("$!")
+	(
+		cd crates/gpui-spinorama
+		env -u NO_COLOR RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort trunk serve --release --port 8084 --open=false --no-autoreload
+	) & pids+=("$!")
+	for port in 8081 8082 8083 8084; do
 		server_up=""
 		startup_interval_s=2
 		startup_attempts=$(( ({{wasm_gallery_startup_timeout_s}} + startup_interval_s - 1) / startup_interval_s ))
@@ -147,6 +169,8 @@ wasm-gallery only="":
 		--capture \
 		--url showcase=http://127.0.0.1:8081 \
 		--url px=http://127.0.0.1:8082 \
+		--url d3rs=http://127.0.0.1:8083 \
+		--url spinorama=http://127.0.0.1:8084 \
 		${only_flags[@]+"${only_flags[@]}"} \
 		--readme-snippet target/demo-site/README-snippet.md
 
