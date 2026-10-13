@@ -1722,6 +1722,9 @@ impl ZipGame {
         }
         for (index, (row, col)) in level.checkpoints.iter().copied().enumerate() {
             let (x, y) = cell_center((row, col), pad, cell, gap);
+            let number_size = 18.0;
+            // Scene2D paints text from the line's top with a 1.25× line height.
+            let number_line_height = number_size * 1.25;
             scene.nodes.push(circle_node(
                 &format!("zip-checkpoint-{}", index + 1),
                 None,
@@ -1734,9 +1737,9 @@ impl ZipGame {
             scene.nodes.push(text_node(
                 &format!("zip-number-{}", index + 1),
                 None,
-                ScenePoint::new(x, y - 7.0),
+                ScenePoint::new(x, y - number_line_height * 0.5),
                 (index + 1).to_string(),
-                18.0,
+                number_size,
                 color(0.08, 0.15, 0.21),
                 Scene2DTextAlign::Center,
                 Some(semantic(
