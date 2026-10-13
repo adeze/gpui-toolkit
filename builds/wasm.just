@@ -26,23 +26,23 @@ wasm-check:
 
 [group('wasm')]
 wasm-serve-hello:
-	cd crates/gpui-hello-web && env -u NO_COLOR RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort trunk serve
+	cd crates/gpui-hello-web && env -u NO_COLOR RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort trunk serve --release
 
 [group('wasm')]
 wasm-serve-showcase:
-	cd crates/gpui-showcase && env -u NO_COLOR RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort trunk serve
+	cd crates/gpui-showcase && env -u NO_COLOR RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort trunk serve --release
 
 [group('wasm')]
 wasm-serve-px:
-	cd crates/gpui-px && env -u NO_COLOR RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort trunk serve
+	cd crates/gpui-px && env -u NO_COLOR RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort trunk serve --release
 
 [group('wasm')]
 wasm-serve-d3rs:
-	cd crates/gpui-d3rs && env -u NO_COLOR RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort trunk serve
+	cd crates/gpui-d3rs && env -u NO_COLOR RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort trunk serve --release
 
 [group('wasm')]
 wasm-serve-spinorama:
-	cd crates/gpui-spinorama && env -u NO_COLOR RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort trunk serve
+	cd crates/gpui-spinorama && env -u NO_COLOR RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort trunk serve --release
 
 # Screenshot a served wasm app and diff against qa/visual/wasm/baselines/<name>.png.
 # Positional args: `just wasm-visual hello 8080 gpui-hello-web` (defaults: showcase).
@@ -62,7 +62,7 @@ wasm-visual name="showcase" port="8081" dir="gpui-showcase" record="" click_x=""
 		click_flags=(--click-xy "{{click_x}}" "{{click_y}}")
 	fi
 	cd crates/{{dir}}
-	RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort env -u NO_COLOR trunk serve --port {{port}} --open=false --no-autoreload &
+	RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort env -u NO_COLOR trunk serve --release --port {{port}} --open=false --no-autoreload &
 	server=$!
 	trap 'kill $server' EXIT
 	cd ../..
@@ -199,7 +199,7 @@ wasm-parity name="showcase" port="8081" dir="gpui-showcase" reference="":
 	ref_flag=""
 	[ -n "{{reference}}" ] && ref_flag="--reference {{reference}}"
 	cd crates/{{dir}}
-	RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort env -u NO_COLOR trunk serve --port {{port}} --open=false --no-autoreload &
+	RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort env -u NO_COLOR trunk serve --release --port {{port}} --open=false --no-autoreload &
 	server=$!
 	trap 'kill $server' EXIT
 	cd ../..
@@ -239,7 +239,7 @@ wasm-native-parity port="8081" *cases="":
 	cargo run -q --manifest-path crates/gpui-showcase/Cargo.toml --features visual-capture -- \
 		--visual-manifest --json > "$native_dir/manifest.json"
 	cd crates/gpui-showcase
-	RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort env -u NO_COLOR trunk serve --port {{port}} --open=false --no-autoreload &
+	RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort env -u NO_COLOR trunk serve --release --port {{port}} --open=false --no-autoreload &
 	server=$!
 	trap 'kill $server' EXIT
 	cd ../..
@@ -260,4 +260,6 @@ wasm-native-parity port="8081" *cases="":
 
 [group('wasm')]
 wasm-upload:
-       rsync -arv --delete target/demo-site/* ovhspin:/var/www/html/gpui-toolkit-prod
+    # Refuse to publish a viewer whose required backend route is missing.
+    curl --fail --silent --show-error --max-time 20 https://gpui-toolkit.spinorama.org/api/spinorama/v1/speakers > /dev/null
+    rsync -arv --delete target/demo-site/* ovhspin:/var/www/html/gpui-toolkit-prod

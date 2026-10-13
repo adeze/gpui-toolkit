@@ -25,6 +25,18 @@ nginx server block before publishing: browser requests use
 for `just wasm-serve-spinorama`. To preview the assembled site, run
 `python3 scripts/serve_demo_site.py` and open `http://127.0.0.1:8090/`.
 
+For the current host, the installer `scripts/install_demo_nginx_proxy.sh`
+adds the snippet to `/etc/nginx/sites-available/gpui-toolkit-prod`, validates
+nginx, and reloads it; failed validation restores the original configuration.
+Stage the installer and `spinorama-nginx.conf` together and run the installer
+with sudo. The snippet also enables WASM gzip responses and COOP/COEP headers.
+`just wasm-upload` checks the required API route before publishing.
+
+All five Trunk Rust links explicitly select `data-wasm-opt="2"`. Site builds,
+development servers, and visual QA servers use `--release`: Cargo applies its
+release optimization and thin LTO, wasm-bindgen removes debug information,
+and Binaryen optimizes the generated WASM. `wasm-check` remains a compile check.
+
 The viewer starts with KEF R3 measurements. Gallery readiness waits for the
 measurement data, rather than just the first canvas frame. Real CEA2034 and
 contour response fixtures cover typed arrays and grid validation in Rust tests.
