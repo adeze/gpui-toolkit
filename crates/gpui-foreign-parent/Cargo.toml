@@ -1,0 +1,15 @@
+[package]
+name = "gpui-foreign-parent"
+version = "0.10.0"
+edition.workspace = true
+rust-version = "1.89"
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Platform-neutral core for foreign-parent editor embedding (GPUI inside host-owned views)"
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true

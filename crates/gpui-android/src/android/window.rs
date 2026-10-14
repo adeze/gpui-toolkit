@@ -34,6 +34,7 @@
 
 use anyhow::{Context as _, Result};
 use futures::channel::oneshot;
+use gpui_foreign_parent::sync::SyncResizeDebounce;
 use gpui::{
     self, AtlasKey, AtlasTile, Capslock, DispatchEventResult, GpuSpecs, Modifiers, PlatformAtlas,
     PlatformDisplay, PlatformInputHandler, PlatformWindow, PromptButton, PromptLevel,
@@ -765,6 +766,73 @@ impl AndroidWindow {
                 state.resize_callback = Some(cb);
             }
         }
+    }
+
+    /// Host-driven resize for foreign-parent editors.
+    ///
+    /// Unlike [`AndroidWindow::handle_resize`], which re-queries the
+    /// `NativeWindow`, the geometry comes from the host call. Stored
+    /// geometry tracks it immediately; only the surface reconfigure is
+    /// debounced through the shared policy.
+    pub fn resize_foreign(
+        &self,
+        width: i32,
+        height: i32,
+        scale: f32,
+        debounce: &SyncResizeDebounce<(i32, i32)>,
+    ) {
+        let resize_cb = {
+            let mut state = self.state.lock();
+            state.width = width;
+            state.height = height;
+            state.scale_factor = scale;
+            state.last_ime_bounds = None;
+            state.resize_callback.take()
+        };
+        debounce.submit((width, height), |(w, h)| {
+            self.reconfigure_surface(w, h)
+        });
+        if let Some(mut cb) = resize_cb {
+            cb(
+                Size {
+                    width: DevicePixels(width),
+                    height: DevicePixels(height),
+                },
+                scale,
+            );
+            let mut state = self.state.lock();
+            if state.resize_callback.is_none() {
+                state.resize_callback = Some(cb);
+            }
+        }
+    }
+
+    /// Reconfigure the surface without blocking the caller.
+    ///
+    /// Returns false when the state lock is contended or there is no
+    /// renderer (headless); the caller stashes the size and retries from
+    /// a later frame. `update_drawable_size` blocks on `device.poll`, so
+    /// it always runs outside the lock, mirroring `handle_resize`.
+    pub fn reconfigure_surface(&self, width: i32, height: i32) -> bool {
+        let mut renderer = match self.state.try_lock() {
+            Some(mut state) => match state.renderer.take() {
+                Some(renderer) => renderer,
+                None => return false,
+            },
+            None => return false,
+        };
+        renderer.update_drawable_size(gpui::size(
+            gpui::DevicePixels(width),
+            gpui::DevicePixels(height),
+        ));
+        // Restore under a blocking acquire: the GPU work already happened
+        // outside the lock, so this critical section is short, and losing
+        // the renderer here would strand the surface.
+        let mut state = self.state.lock();
+        if state.renderer.is_none() {
+            state.renderer = Some(renderer);
+        }
+        true
     }
 
     // ── drawing ───────────────────────────────────────────────────────────────

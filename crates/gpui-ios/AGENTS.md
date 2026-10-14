@@ -19,7 +19,10 @@ gpui-ios/
       platform.rs       # IosPlatform: Platform trait implementation
       window/           # IosWindow split: ios_window.rs (shell), touch.rs
                       # (gestures/momentum), renderer.rs (wgpu lifecycle),
-                      # accessibility.rs (VoiceOver mirroring)
+                      # accessibility.rs (VoiceOver mirroring),
+                      # foreign_parent.rs (AUv3/host-owned UIView embedding)
+      ffi/foreign_parent.rs  # C entry points for foreign hosts: create,
+                      # destroy, request_frame, resize, set_active/hovered
       text_system/      # CoreText text shaping/rendering
       text_input.rs     # Software keyboard input handling
       display.rs        # Screen/display information
@@ -54,6 +57,8 @@ All Swift-callable functions are `#[unsafe(no_mangle)] pub extern "C"`:
 | `gpui_ios_will_resign_active(ptr)` | UIKit lifecycle | App resigning active |
 | `gpui_ios_did_enter_background(ptr)` | UIKit lifecycle | App entering background |
 | `gpui_ios_will_terminate(ptr)` | UIKit lifecycle | App terminating |
+| `gpui_ios_foreign_create(...)` | Host view controller | Create editor in a host-owned `UIView` (keyed registry, placeholder root; Rust hosts use `gpui_ios_foreign_create_with` for content injection) |
+| `gpui_ios_foreign_destroy/request_frame/resize/set_active/set_hovered/frame_stats` | Host view controller / CADisplayLink | Foreign editor lifecycle (touches/keys route through the shared view classes, no per-event FFI) |
 
 ### Window management (window/)
 

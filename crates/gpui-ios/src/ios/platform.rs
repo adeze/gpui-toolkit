@@ -22,6 +22,11 @@ pub struct IosPlatform {
     foreground_executor: ForegroundExecutor,
     text_system: Arc<dyn PlatformTextSystem>,
     state: Mutex<IosPlatformState>,
+    /// Foreign-parent mode: no app-delegate launch flow. `run()` invokes
+    /// the launch callback synchronously (the host owns the loop) and
+    /// `open_window` routes to the foreign constructor when the create
+    /// entry point stashed a parent view.
+    foreign: bool,
 }
 
 pub(crate) struct IosPlatformState {
@@ -54,7 +59,15 @@ impl IosPlatform {
                 open_urls_callback: None,
                 thermal_state_callback: None,
             }),
+            foreign: false,
         }
+    }
+
+    /// Platform for foreign-parent embedding (extension hosts).
+    pub fn new_foreign() -> Self {
+        let mut platform = Self::new();
+        platform.foreign = true;
+        platform
     }
 }
 
@@ -84,6 +97,13 @@ impl Platform for IosPlatform {
     }
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
+        if self.foreign {
+            // Extension hosts own the run loop; there is no app-delegate
+            // launch flow to wait for.
+            log::info!("GPUI iOS: foreign Platform::run() invoking launch callback now");
+            on_finish_launching();
+            return;
+        }
         let mut state = self.state.lock();
         state.finish_launching = Some(on_finish_launching);
         if let Some(callback) = state.finish_launching.take() {
@@ -129,6 +149,15 @@ impl Platform for IosPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
+        if let Some(info) = super::window::take_pending_parent() {
+            let editor_id = info.editor_id;
+            let window = Box::new(IosWindow::new_in_parent_view(handle, options, info)?);
+            // SAFETY: `window` names the live boxed `IosWindow` outliving
+            // registration; the registry asserts the main thread.
+            unsafe { super::ffi::foreign_registry().register(editor_id, (&raw const *window).cast()) };
+            window.register_foreign_with_ffi();
+            return Ok(window);
+        }
         let window = Box::new(IosWindow::new(handle, options)?);
         window.register_with_ffi();
         Ok(window)

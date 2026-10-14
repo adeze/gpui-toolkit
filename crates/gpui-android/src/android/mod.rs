@@ -151,6 +151,7 @@ pub fn size<T>(width: T, height: T) -> Size<T> {
 
 pub mod dispatcher;
 pub mod display;
+pub mod foreign_parent;
 pub mod jni;
 pub mod keyboard;
 pub mod platform;

@@ -1,5 +1,6 @@
 use super::super::IosDisplay;
 use super::consts::GPUI_WINDOW_IVAR;
+use super::foreign_parent::ForeignParentState;
 use super::misc::ns_string_to_string;
 use super::misc::query_scene_metrics;
 use super::misc::view_safe_area_insets;
@@ -96,8 +97,10 @@ pub(crate) struct IosWindow {
     /// Prevents nested UIKit/FFI input dispatch from borrowing the callback
     /// while it is already running. Nested events are delivered in order when
     /// the active callback returns.
-    input_dispatching: Cell<bool>,
-    pending_input_events: RefCell<VecDeque<PlatformInput>>,
+    /// `pub(super)` so the foreign-parent constructor (sibling module) can
+    /// build the window literal.
+    pub(super) input_dispatching: Cell<bool>,
+    pub(super) pending_input_events: RefCell<VecDeque<PlatformInput>>,
     /// Callback for active status changes
     pub(super) active_status_callback: StatusCallback,
     /// Callback for hover status changes (not really applicable on iOS)
@@ -160,6 +163,10 @@ pub(crate) struct IosWindow {
     pub(super) accessibility_diff_scratch: RefCell<crate::accessibility::AccessibilityDiffScratch>,
     /// Native UIKit/SwiftUI views overlaid with GPUI-managed bounds.
     pub(super) platform_view_host: NativePlatformViewHost,
+    /// Foreign-parent embedding state (frame throttle, resize debounce,
+    /// host-driven focus/hover). Default-inert on the app path; driven by
+    /// the foreign FFI entry points when this window has no `UIWindow`.
+    pub(super) foreign: ForeignParentState,
 }
 
 unsafe impl Send for IosWindow {}
@@ -377,6 +384,7 @@ impl IosWindow {
                 prev_accessibility_snapshot: RefCell::new(None),
                 accessibility_diff_scratch: RefCell::new(Default::default()),
                 platform_view_host: NativePlatformViewHost::new(view as *mut c_void),
+                foreign: ForeignParentState::default(),
             };
 
             // Keep app-level hardware keyboard shortcuts alive when no text
@@ -417,9 +425,15 @@ impl IosWindow {
     /// (e.g., in a Box or Arc).
     pub(crate) fn register_with_ffi(&self) {
         super::super::ffi::register_window(self as *const Self);
+        self.set_view_ivars();
 
-        // Set the window pointer on the view so touch events can find us,
-        // and on the text input view so keyboard input can find us.
+        // Listen for keyboard show/hide so we can expose the keyboard height.
+        self.register_keyboard_observers();
+    }
+
+    /// Set the window pointer on the Metal view so touch events can find us,
+    /// and on the text input view so keyboard input can find us.
+    pub(super) fn set_view_ivars(&self) {
         unsafe {
             let window_ptr = self as *const Self as *mut std::ffi::c_void;
             (*self.view).set_ivar(GPUI_WINDOW_IVAR, window_ptr);
@@ -431,9 +445,6 @@ impl IosWindow {
                 self.text_input_view
             );
         }
-
-        // Listen for keyboard show/hide so we can expose the keyboard height.
-        self.register_keyboard_observers();
     }
 
     /// Register for keyboard show/hide notifications so we can track the
@@ -1007,11 +1018,16 @@ impl PlatformWindow for IosWindow {
     }
 
     fn is_maximized(&self) -> bool {
-        true // iOS windows are always "maximized"
+        // Foreign-parent windows have no `UIWindow` and report windowed.
+        !self.window.is_null()
     }
 
     fn window_bounds(&self) -> WindowBounds {
-        WindowBounds::Fullscreen(self.bounds.get())
+        if self.window.is_null() {
+            WindowBounds::Windowed(self.bounds.get())
+        } else {
+            WindowBounds::Fullscreen(self.bounds.get())
+        }
     }
 
     fn content_size(&self) -> Size<Pixels> {
@@ -1083,6 +1099,10 @@ impl PlatformWindow for IosWindow {
         detail: Option<&str>,
         answers: &[PromptButton],
     ) -> Option<futures::channel::oneshot::Receiver<usize>> {
+        if self.window.is_null() {
+            // No view controller to present from in extension contexts.
+            return None;
+        }
         let (tx, rx) = futures::channel::oneshot::channel();
         let tx = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
 
@@ -1144,6 +1164,11 @@ impl PlatformWindow for IosWindow {
     }
 
     fn is_active(&self) -> bool {
+        if self.window.is_null() {
+            // Extension-safe: no `sharedApplication` access; the host
+            // reports focus through the foreign FFI entry point.
+            return self.foreign.is_active();
+        }
         unsafe {
             let app: *mut Object = msg_send![class!(UIApplication), sharedApplication];
             let key_window: *mut Object = msg_send![app, keyWindow];
@@ -1152,6 +1177,9 @@ impl PlatformWindow for IosWindow {
     }
 
     fn is_hovered(&self) -> bool {
+        if self.window.is_null() {
+            return self.foreign.is_hovered();
+        }
         // Hover isn't really applicable on iOS
         false
     }
@@ -1181,7 +1209,7 @@ impl PlatformWindow for IosWindow {
     }
 
     fn is_fullscreen(&self) -> bool {
-        true
+        !self.window.is_null()
     }
 
     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
@@ -1193,11 +1221,21 @@ impl PlatformWindow for IosWindow {
     }
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
-        *self.active_status_callback.borrow_mut() = Some(callback);
+        if self.window.is_null() {
+            // Foreign windows notify transition-only through the shared
+            // cell; the host drives it via the foreign FFI entry point.
+            self.foreign.on_active_change(callback);
+        } else {
+            *self.active_status_callback.borrow_mut() = Some(callback);
+        }
     }
 
     fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {
-        *self.hover_status_callback.borrow_mut() = Some(callback);
+        if self.window.is_null() {
+            self.foreign.on_hover_change(callback);
+        } else {
+            *self.hover_status_callback.borrow_mut() = Some(callback);
+        }
     }
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
@@ -1225,6 +1263,9 @@ impl PlatformWindow for IosWindow {
     }
 
     fn draw(&self, scene: &Scene) {
+        // Applies a debounced foreign resize when one is due; no-op on
+        // the app path.
+        self.poll_foreign_surface_size();
         self.draw_scene(scene);
     }
 

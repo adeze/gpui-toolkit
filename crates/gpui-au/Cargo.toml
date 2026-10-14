@@ -37,6 +37,9 @@ raw-window-handle = { workspace = true }
 # GPUI core
 gpui = { workspace = true }
 
+# Shared foreign-parent embedding core (registry, throttle, debounce, slots)
+gpui-foreign-parent = { workspace = true }
+
 # wgpu renderer (Metal backend on macOS)
 gpui_wgpu = { workspace = true }
 wgpu = { workspace = true }

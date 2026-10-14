@@ -11,10 +11,10 @@
 use crate::helpers::{nslog, nslog_verbose};
 use crate::window::{PENDING_VIEW, PendingViewInfo, with_au_window};
 use gpui::{
-    App, AppCell, AppContext, Context, ElementId, InteractiveElement as _, IntoElement,
-    MouseButton, ParentElement, PlatformInput, Render, SharedString,
-    StatefulInteractiveElement as _, Styled, Window, WindowOptions, div, point, px, rgb,
+    App, AppCell, AppContext, Context, Entity, IntoElement, MouseButton, PlatformInput, Render,
+    Styled, Window, WindowOptions, div, point, px,
 };
+use gpui_foreign_parent::{fill_out_buffer, optional_c_string};
 use objc::runtime::Object;
 use std::ffi::CStr;
 use std::os::raw::c_char;
@@ -33,56 +33,16 @@ fn init_logger() {
 
 // ── Root View ────────────────────────────────────────────────────────────────
 
-struct AuRootView {
-    plugin_label: SharedString,
-    click_count: usize,
-    click_label: SharedString,
-}
+/// Neutral placeholder root for the C entry point.
+///
+/// The C ABI cannot carry a Rust factory, so [`gpui_au_create`] renders
+/// an empty root. Hosts that need real editor content inject it through
+/// [`gpui_au_create_with`]; see `examples/demo_root_view.rs`.
+struct PlaceholderRootView;
 
-impl AuRootView {
-    fn new(plugin_type: impl AsRef<str>) -> Self {
-        let plugin_label = SharedString::from(format!("SOTF: {}", plugin_type.as_ref()));
-        Self {
-            plugin_label,
-            click_count: 0,
-            click_label: SharedString::from("Clicks: 0"),
-        }
-    }
-
-    fn refresh_click_label(&mut self) {
-        self.click_label = SharedString::from(format!("Clicks: {}", self.click_count));
-    }
-}
-
-impl Render for AuRootView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .size_full()
-            .bg(rgb(0x1a1a2e))
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .child(
-                div()
-                    .text_color(rgb(0xffffff))
-                    .text_xl()
-                    .child(self.plugin_label.clone()),
-            )
-            .child(
-                div()
-                    .id(ElementId::Name("click-target".into()))
-                    .mt(px(16.0))
-                    .px(px(16.0))
-                    .py(px(8.0))
-                    .bg(rgb(0x3366ff))
-                    .text_color(rgb(0xffffff))
-                    .child(self.click_label.clone())
-                    .on_click(cx.listener(|this, _event, _window, _cx| {
-                        this.click_count += 1;
-                        this.refresh_click_label();
-                    })),
-            )
+impl Render for PlaceholderRootView {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div().size_full()
     }
 }
 
@@ -119,10 +79,96 @@ fn clone_application_cell(app: &gpui::Application) -> Rc<AppCell> {
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
+/// Create a GPUI context embedded in an `NSView`, with injected content.
+///
+/// Rust-native constructor behind [`gpui_au_create`]: plugin crates call
+/// this with their own root-view factory instead of going through the C
+/// ABI. Returns null when the view is null or the window fails to open.
+///
+/// # Safety
+///
+/// `ns_view` must be null or point to a live `NSView` that outlives the
+/// returned context. All calls must happen on the host main thread.
+pub unsafe fn gpui_au_create_with<V: Render + 'static>(
+    ns_view: *mut Object,
+    width: f32,
+    height: f32,
+    scale: f32,
+    plugin_type: &str,
+    build_root_view: impl FnOnce(&mut Window, &mut App) -> Entity<V> + 'static,
+) -> *mut AuContext {
+    init_logger();
+
+    if ns_view.is_null() {
+        nslog(b"SOTF gpui_au_create: null NSView!");
+        return std::ptr::null_mut();
+    }
+
+    let msg = format!(
+        "SOTF gpui_au_create: plugin={plugin_type}, size={width}x{height} @{scale:.1}x, view={ns_view:p}"
+    );
+    nslog_verbose(msg.as_bytes());
+
+    // Store the NSView info in a thread-local so AuWindow::new() can read it
+    // during the open_window() call inside app.run().
+    PENDING_VIEW.with(|pv| {
+        *pv.borrow_mut() = Some(PendingViewInfo {
+            ns_view,
+            width,
+            height,
+            scale,
+        });
+    });
+
+    nslog_verbose(b"SOTF gpui_au_create: creating GPUI Application");
+    let platform = Rc::new(crate::AuPlatform::new());
+    let app = gpui::Application::with_platform(platform);
+
+    let app_cell = clone_application_cell(&app);
+    nslog_verbose(b"SOTF gpui_au_create: Rc<AppCell> cloned for lifetime management");
+
+    let window_opened = std::rc::Rc::new(std::cell::Cell::new(false));
+    let window_opened_clone = window_opened.clone();
+    app.run(move |cx: &mut App| {
+        nslog_verbose(b"SOTF gpui_au_create: inside app.run callback");
+        match cx.open_window(
+            WindowOptions {
+                window_bounds: None,
+                ..Default::default()
+            },
+            build_root_view,
+        ) {
+            Ok(_handle) => {
+                nslog_verbose(b"SOTF gpui_au_create: window opened OK");
+                window_opened_clone.set(true);
+            }
+            Err(e) => {
+                let msg = format!("SOTF gpui_au_create: open_window FAILED: {e:#}");
+                nslog(msg.as_bytes());
+            }
+        }
+    });
+
+    if !window_opened.get() {
+        nslog(b"SOTF gpui_au_create: returning null because open_window failed");
+        return std::ptr::null_mut();
+    }
+
+    nslog_verbose(b"SOTF gpui_au_create: app.run() returned, context ready");
+
+    let context = Box::new(AuContext {
+        _plugin_type: plugin_type.to_string(),
+        _app_cell: app_cell,
+    });
+    Box::into_raw(context)
+}
+
 /// Create a GPUI context embedded in an `NSView`.
 ///
 /// Null pointers are rejected; otherwise `ns_view` must be a valid `NSView`
-/// pointer and `plugin_type` must be a valid C string.
+/// pointer and `plugin_type` must be a valid C string. Renders the neutral
+/// placeholder root; Rust hosts inject real content through
+/// [`gpui_au_create_with`].
 #[unsafe(no_mangle)]
 pub extern "C" fn gpui_au_create(
     ns_view: *mut Object,
@@ -150,64 +196,13 @@ pub extern "C" fn gpui_au_create(
         }
     };
 
-    let msg = format!(
-        "SOTF gpui_au_create: plugin={plugin_type_str}, size={width}x{height} @{scale:.1}x, view={ns_view:p}"
-    );
-    nslog_verbose(msg.as_bytes());
-
-    // Store the NSView info in a thread-local so AuWindow::new() can read it
-    // during the open_window() call inside app.run().
-    PENDING_VIEW.with(|pv| {
-        *pv.borrow_mut() = Some(PendingViewInfo {
-            ns_view,
-            width,
-            height,
-            scale,
-        });
-    });
-
-    nslog_verbose(b"SOTF gpui_au_create: creating GPUI Application");
-    let platform = Rc::new(crate::AuPlatform::new());
-    let app = gpui::Application::with_platform(platform);
-
-    let app_cell = clone_application_cell(&app);
-    nslog_verbose(b"SOTF gpui_au_create: Rc<AppCell> cloned for lifetime management");
-
-    let window_opened = std::rc::Rc::new(std::cell::Cell::new(false));
-    let window_opened_clone = window_opened.clone();
-    let pt = plugin_type_str.clone();
-    app.run(move |cx: &mut App| {
-        nslog_verbose(b"SOTF gpui_au_create: inside app.run callback");
-        match cx.open_window(
-            WindowOptions {
-                window_bounds: None,
-                ..Default::default()
-            },
-            |_window, cx| cx.new(|_| AuRootView::new(pt)),
-        ) {
-            Ok(_handle) => {
-                nslog_verbose(b"SOTF gpui_au_create: window opened OK");
-                window_opened_clone.set(true);
-            }
-            Err(e) => {
-                let msg = format!("SOTF gpui_au_create: open_window FAILED: {e:#}");
-                nslog(msg.as_bytes());
-            }
-        }
-    });
-
-    if !window_opened.get() {
-        nslog(b"SOTF gpui_au_create: returning null because open_window failed");
-        return std::ptr::null_mut();
+    // SAFETY: `ns_view` is null-checked above and documented as a live
+    // `NSView` outliving the context; hosts call on the main thread.
+    unsafe {
+        gpui_au_create_with(ns_view, width, height, scale, &plugin_type_str, |_, cx| {
+            cx.new(|_| PlaceholderRootView)
+        })
     }
-
-    nslog_verbose(b"SOTF gpui_au_create: app.run() returned, context ready");
-
-    let context = Box::new(AuContext {
-        _plugin_type: plugin_type_str,
-        _app_cell: app_cell,
-    });
-    Box::into_raw(context)
 }
 
 /// Destroy a GPUI AU context.
@@ -414,16 +409,6 @@ fn mac_key_code_to_key(key_code: u16) -> Option<&'static str> {
     }
 }
 
-fn optional_c_string(value: *const c_char) -> Option<String> {
-    if value.is_null() {
-        None
-    } else {
-        // SAFETY: non-null by the check above; callers pass valid C
-        // strings, and the bytes are copied out immediately.
-        unsafe { CStr::from_ptr(value).to_str().ok().map(str::to_owned) }
-    }
-}
-
 fn key_event(
     key_code: u16,
     characters: *const c_char,
@@ -433,11 +418,18 @@ fn key_event(
     let named_key = mac_key_code_to_key(key_code);
     let characters = named_key
         .is_none()
-        .then(|| optional_c_string(characters))
+        .then(|| {
+            // SAFETY: the host passes valid C strings or null; bytes are
+            // copied out immediately.
+            unsafe { optional_c_string(characters) }
+        })
         .flatten();
     let characters_ignoring_modifiers = named_key
         .is_none()
-        .then(|| optional_c_string(characters_ignoring_modifiers))
+        .then(|| {
+            // SAFETY: same as `characters` above.
+            unsafe { optional_c_string(characters_ignoring_modifiers) }
+        })
         .flatten();
     let key = named_key
         .map(str::to_owned)
@@ -512,7 +504,9 @@ pub extern "C" fn gpui_au_insert_text(context: *mut AuContext, text: *const c_ch
     if context.is_null() {
         return;
     }
-    if let Some(text) = optional_c_string(text) {
+    // SAFETY: the host passes valid C strings or null; bytes are
+    // copied out immediately.
+    if let Some(text) = unsafe { optional_c_string(text) } {
         with_au_window(|window| window.insert_text(&text));
     }
 }
@@ -528,7 +522,9 @@ pub extern "C" fn gpui_au_set_marked_text(
     if context.is_null() {
         return;
     }
-    if let Some(text) = optional_c_string(text) {
+    // SAFETY: the host passes valid C strings or null; bytes are
+    // copied out immediately.
+    if let Some(text) = unsafe { optional_c_string(text) } {
         with_au_window(|window| {
             window.set_marked_text(&text, selected_location, selected_length);
         });
@@ -606,7 +602,9 @@ pub extern "C" fn gpui_au_parameter_register(
     if context.is_null() {
         return false;
     }
-    let name = optional_c_string(name).unwrap_or_else(|| format!("param-{id}"));
+    // SAFETY: the host passes valid C strings or null; bytes are
+    // copied out immediately.
+    let name = unsafe { optional_c_string(name) }.unwrap_or_else(|| format!("param-{id}"));
     with_au_window(|window| {
         window.register_parameter(id, &name, min_value, max_value, default_value)
     })
@@ -631,27 +629,10 @@ pub extern "C" fn gpui_au_save_state(
     } else {
         with_au_window(|window| window.capture_plugin_state()).unwrap_or_default()
     };
-    let required = bytes.len();
-    if !written.is_null() {
-        // SAFETY: `written` is null-checked; the host passes a writable
-        // out count.
-        unsafe {
-            *written = 0;
-        }
-    }
-    if out.is_null() || capacity == 0 {
-        return required;
-    }
-    let count = required.min(capacity);
-    // SAFETY: `out` is non-null with room for `count <= capacity` bytes;
-    // source and destination are disjoint allocations.
-    unsafe {
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), out, count);
-        if !written.is_null() {
-            *written = count;
-        }
-    }
-    required
+    // SAFETY: `out` is null or writable for `capacity` bytes and
+    // `written` is null or writable, per the host contract documented
+    // on this function.
+    unsafe { fill_out_buffer(&bytes, out, capacity, written) }
 }
 
 /// Realtime health counters: frames dropped on a busy renderer and
@@ -706,19 +687,24 @@ mod tests {
     use gpui::TestAppContext;
 
     #[gpui::test]
-    async fn test_root_view_renders(cx: &mut TestAppContext) {
-        let _window = cx.add_window(|_window, _cx| AuRootView::new("test-plugin"));
+    async fn test_placeholder_root_renders(cx: &mut TestAppContext) {
+        let _window = cx.add_window(|_window, _cx| PlaceholderRootView);
     }
 
     #[test]
-    fn test_root_view_caches_labels() {
-        let mut view = AuRootView::new("MyPlugin");
-        assert_eq!(view.plugin_label.as_ref(), "SOTF: MyPlugin");
-        assert_eq!(view.click_label.as_ref(), "Clicks: 0");
-
-        view.click_count = 3;
-        view.refresh_click_label();
-        assert_eq!(view.click_label.as_ref(), "Clicks: 3");
+    fn create_with_rejects_null_view() {
+        // SAFETY: a null view is explicitly rejected without dereference.
+        let context = unsafe {
+            gpui_au_create_with(
+                std::ptr::null_mut(),
+                320.0,
+                200.0,
+                2.0,
+                "test",
+                |_, cx| cx.new(|_| PlaceholderRootView),
+            )
+        };
+        assert!(context.is_null());
     }
 
     #[test]

@@ -15,6 +15,8 @@ The `gpui-toolkit` workspace contains several related crates for building GPUI a
 | `gpui-builder` | Generic constraint-based layout solver — priority collapse, auto-axis, display tiers, dividers | [README](gpui-builder/README.md) |
 | `gpui-d3rs` | Low-level D3.js-inspired visualization primitives, incl. vello-backed 2D rasterization (`vello2d` module, zero-copy via `WgpuCustomDraw`, vello_cpu fallback); `d3rs-showcase` example doubles as the wasm demo (route `/d3rs/`) | [README](gpui-d3rs/README.md) |
 | `gpui-design` | Platform-adaptive design system (Apple HIG, Material 3, Fluent, Neutral) — spacing, corners, typography, animation | [README](gpui-design/README.md) |
+| `gpui-foreign-parent` | Platform-neutral core for foreign-parent editor embedding (registry, frame throttle, resize debounce, callback slots, FFI helpers) | [contract](docs/foreign-parent-editor-embedding.md) |
+| `gpui-web-foreign` | Browser binding: page-owned canvas host shell (observers, rAF pump, listeners) plus DOM input tables; renderer provider needs the §16 fork change | [contract](docs/foreign-parent-editor-embedding.md) |
 | `gpui-ios` | iOS platform backend (Metal rendering, touch, text) | [README](gpui-ios/README.md), [AGENTS.md](gpui-ios/AGENTS.md) |
 | `gpui-pretext` | High-performance text measurement and multiline layout (Rust port of chenglou/pretext) | [README](gpui-pretext/README.md) |
 | `gpui-profiler` | Lightweight allocation profiling utilities for interactive UI hot paths | [README](gpui-profiler/README.md) |

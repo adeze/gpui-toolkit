@@ -457,6 +457,10 @@ pub struct AndroidPlatform {
     quit_callback_pending: AtomicBool,
     callback_id: PlatformCallbackId,
     callback_thread: std::thread::ThreadId,
+    /// Foreign-parent mode: no `NativeActivity` event loop. `run()` invokes
+    /// the launch callback synchronously (the host owns the loop) and
+    /// `open_window` routes to the pending foreign window.
+    foreign: bool,
 }
 
 /// Check whether a TrueType/OpenType font file contains CBDT (Color Bitmap
@@ -711,7 +715,23 @@ impl AndroidPlatform {
             quit_callback_pending: AtomicBool::new(false),
             callback_id,
             callback_thread: std::thread::current().id(),
+            foreign: false,
         }
+    }
+
+    /// Platform for foreign-parent embedding (host-owned `Surface`).
+    ///
+    /// Uses the headless dispatcher (no `ALooper`); the host pumps frames
+    /// and the foreign entry points flush foreground tasks per frame.
+    pub fn new_foreign() -> Self {
+        let mut platform = Self::new(true);
+        platform.foreign = true;
+        platform
+    }
+
+    /// Shared dispatcher, for per-frame foreground-task flushes.
+    pub fn dispatcher(&self) -> Arc<AndroidDispatcher> {
+        Arc::clone(&self.state.lock().dispatcher)
     }
 
     fn on_callback_thread(&self) -> bool {
@@ -821,6 +841,13 @@ impl AndroidPlatform {
     /// `AndroidWindow` exists).  At that point `cx.open_window(...)` will
     /// find the existing primary window.
     pub fn run(&self, on_finish_launching: Box<dyn FnOnce() + 'static>) {
+        if self.foreign {
+            // Extension-style hosts own the loop; there is no activity
+            // event loop to wait for.
+            log::info!("AndroidPlatform::run — foreign mode, invoking launch callback now");
+            on_finish_launching();
+            return;
+        }
         {
             self.with_callbacks(|callbacks| {
                 callbacks.finish_launching = Some(on_finish_launching);
@@ -1440,6 +1467,25 @@ impl Platform for AndroidPlatform {
         _handle: AnyWindowHandle,
         _options: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
+        // Foreign editors stash their window ahead of `run()`; route to
+        // it instead of the primary window so multi-editor hosts work.
+        if let Some(pending) = super::foreign_parent::take_pending_foreign() {
+            super::foreign_parent::register_foreign_window(
+                pending.editor_id,
+                Arc::clone(&pending.window),
+                self.dispatcher(),
+            );
+            let display = self
+                .state
+                .lock()
+                .displays
+                .primary()
+                .map(|d| Rc::new(d.clone()) as Rc<dyn PlatformDisplay>);
+            return Ok(Box::new(super::window::AndroidPlatformWindow::new(
+                pending.window,
+                display,
+            )));
+        }
         // On Android the native window is created by the system via
         // MainEvent::InitWindow, not by the application.  If a window
         // already exists we wrap it in an AndroidPlatformWindow and hand

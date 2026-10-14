@@ -13,7 +13,17 @@ use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 impl IosWindow {
     pub(super) fn draw_scene(&self, scene: &Scene) {
-        let mut guard = self.renderer.lock();
+        // Never block the display-link thread on the renderer: when a
+        // resize holds the lock, skip the frame instead of stalling.
+        let mut guard = match self.renderer.try_lock() {
+            Some(guard) => guard,
+            None => {
+                if self.window.is_null() {
+                    self.foreign.note_dropped_frame();
+                }
+                return;
+            }
+        };
         if let Some(renderer) = guard.as_mut() {
             renderer.draw(scene);
         } else {

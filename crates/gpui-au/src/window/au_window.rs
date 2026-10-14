@@ -1,8 +1,6 @@
 use super::super::AuDisplay;
 use super::PENDING_VIEW;
 use super::au_raw_window::AuRawWindow;
-use super::au_window_ptr::AU_WINDOW;
-use super::au_window_ptr::AuWindowPtr;
 use super::fallback_atlas::FallbackAtlas;
 use crate::helpers::{nslog, nslog_verbose};
 use crate::params::AuParameterTree;
@@ -12,6 +10,7 @@ use gpui::{
     Point, PromptButton, PromptLevel, RequestFrameOptions, Scene, Size, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams, px, size,
 };
+use gpui_foreign_parent::{CallbackSlot, FrameThrottle, ResizeDebounce, TransitionCell};
 use gpui_wgpu::{GpuContext, WgpuRenderer, WgpuSurfaceConfig};
 use objc::{class, msg_send, runtime::Object, sel, sel_impl};
 use parking_lot::Mutex;
@@ -27,50 +26,16 @@ use std::{
         Arc, OnceLock,
         atomic::{AtomicUsize, Ordering},
     },
-    time::{Duration, Instant},
 };
 
 /// Single shared fallback atlas used when no wgpu renderer is available.
 /// Avoids allocating a fresh `Mutex`+`HashMap` on every `sprite_atlas()` call.
 static FALLBACK_ATLAS: OnceLock<Arc<FallbackAtlas>> = OnceLock::new();
 
-/// Minimum interval between wgpu surface reconfigures during a host
-/// resize-drag. Bounds, the Metal layer frame, and the GPUI resize callback
-/// update on every event; only the expensive surface reconfigure is gated.
-/// A newer size that arrives inside the window is stashed and applied from
-/// `draw()`, so the surface always converges to the latest host size.
-const RESIZE_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(16);
-
-/// Minimum interval between GPUI frame requests forwarded from the Swift
-/// `CVDisplayLink` tick. Ticks arriving faster than this are coalesced and
-/// counted instead of queueing redundant draws.
-const FRAME_REQUEST_MIN_INTERVAL: Duration = Duration::from_millis(4);
-
 fn previous_utf16_code_point_start(caret: usize, suffix: &str) -> usize {
     suffix.chars().last().map_or(caret, |character| {
         caret.saturating_sub(character.len_utf16())
     })
-}
-
-/// Execute a callback with a reference to the current AU window, if any.
-///
-/// Registration, unregistration, and all dereferences are serialized on the
-/// host main thread. Copy the pointer while holding the mutex, then release it
-/// before entering arbitrary GPUI or host callbacks so re-entry cannot
-/// deadlock on `AU_WINDOW`.
-pub(crate) fn with_au_window<F, R>(f: F) -> Option<R>
-where
-    F: FnOnce(&AuWindow) -> R,
-{
-    AuWindowPtr::assert_main_thread();
-    let ptr = AU_WINDOW.lock().ok()?.as_ref()?.0;
-    if ptr.is_null() {
-        return None;
-    }
-    // SAFETY: `ptr` is null-checked and names the registered `AuWindow`,
-    // which outlives registration; main-thread use is asserted above.
-    let window = unsafe { &*ptr };
-    Some(f(window))
 }
 
 pub(crate) struct AuWindow {
@@ -79,21 +44,18 @@ pub(crate) struct AuWindow {
     pub(super) bounds: Cell<Bounds<Pixels>>,
     pub(super) scale_factor: Cell<f32>,
     pub(super) input_handler: RefCell<Option<PlatformInputHandler>>,
-    pub(crate) request_frame_callback: RefCell<Option<Box<dyn FnMut(RequestFrameOptions)>>>,
-    pub(super) input_callback:
-        RefCell<Option<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>>,
-    pub(super) active_status_callback: RefCell<Option<Box<dyn FnMut(bool)>>>,
-    pub(super) hover_status_callback: RefCell<Option<Box<dyn FnMut(bool)>>>,
-    pub(super) resize_callback: RefCell<Option<Box<dyn FnMut(Size<Pixels>, f32)>>>,
-    pub(super) moved_callback: RefCell<Option<Box<dyn FnMut()>>>,
-    pub(super) should_close_callback: RefCell<Option<Box<dyn FnMut() -> bool>>>,
-    pub(super) hit_test_callback: RefCell<Option<Box<dyn FnMut() -> Option<WindowControlArea>>>>,
+    pub(crate) request_frame_callback: CallbackSlot<RequestFrameOptions>,
+    pub(super) input_callback: CallbackSlot<PlatformInput, DispatchEventResult>,
+    active: TransitionCell,
+    hovered: TransitionCell,
+    pub(super) resize_callback: CallbackSlot<(Size<Pixels>, f32)>,
+    pub(super) moved_callback: CallbackSlot<()>,
+    pub(super) should_close_callback: CallbackSlot<(), bool>,
+    pub(super) hit_test_callback: CallbackSlot<(), Option<WindowControlArea>>,
     pub(super) close_callback: RefCell<Option<Box<dyn FnOnce()>>>,
-    pub(super) appearance_changed_callback: RefCell<Option<Box<dyn FnMut()>>>,
+    pub(super) appearance_changed_callback: CallbackSlot<()>,
     pub(super) mouse_position: Cell<Point<Pixels>>,
     pub(super) modifiers: Cell<Modifiers>,
-    is_active: Cell<bool>,
-    is_hovered: Cell<bool>,
     pub(super) renderer: Mutex<Option<Rc<Mutex<WgpuRenderer>>>>,
     /// Shared GPU context, created up front (cheap) and consumed by the
     /// deferred renderer construction.
@@ -105,16 +67,12 @@ pub(crate) struct AuWindow {
     /// (`AppKit` surface creation is main-thread-affine, so a background
     /// thread cannot safely take this work instead.)
     pending_gpu_init: Mutex<Option<PendingGpuInit>>,
-    /// Last time the wgpu surface was reconfigured; gates resize churn.
-    last_surface_config: Cell<Option<Instant>>,
-    /// Newest drawable size waiting for the debounce window to elapse.
-    pending_surface_size: Cell<Option<Size<DevicePixels>>>,
-    /// Last time a frame request was forwarded to GPUI.
-    last_frame_request: Cell<Option<Instant>>,
+    /// Debounced wgpu surface reconfiguration (contract §§5–6).
+    surface_debounce: ResizeDebounce<Size<DevicePixels>>,
+    /// Host-pump frame-request throttle (contract §6).
+    frame_throttle: FrameThrottle,
     /// Frames dropped because the renderer was busy (`try_lock` failed).
     dropped_frames: AtomicUsize,
-    /// `CVDisplayLink` ticks coalesced by the frame-request throttle.
-    coalesced_frames: AtomicUsize,
     /// Minimal host parameter bridge (`AUParameterTree` analogue).
     parameters: AuParameterTree,
 }
@@ -175,31 +133,27 @@ impl AuWindow {
             }),
             scale_factor: Cell::new(scale),
             input_handler: RefCell::new(None),
-            request_frame_callback: RefCell::new(None),
-            input_callback: RefCell::new(None),
-            active_status_callback: RefCell::new(None),
-            hover_status_callback: RefCell::new(None),
-            resize_callback: RefCell::new(None),
-            moved_callback: RefCell::new(None),
-            should_close_callback: RefCell::new(None),
-            hit_test_callback: RefCell::new(None),
+            request_frame_callback: CallbackSlot::new(),
+            input_callback: CallbackSlot::new(),
+            active: TransitionCell::new(true),
+            hovered: TransitionCell::new(false),
+            resize_callback: CallbackSlot::new(),
+            moved_callback: CallbackSlot::new(),
+            should_close_callback: CallbackSlot::new(),
+            hit_test_callback: CallbackSlot::new(),
             close_callback: RefCell::new(None),
-            appearance_changed_callback: RefCell::new(None),
+            appearance_changed_callback: CallbackSlot::new(),
             mouse_position: Cell::new(Point::default()),
             modifiers: Cell::new(Modifiers::default()),
-            is_active: Cell::new(true),
-            is_hovered: Cell::new(false),
             renderer: Mutex::new(None),
             gpu_context: Rc::new(RefCell::new(None)),
             pending_gpu_init: Mutex::new(Some(PendingGpuInit {
                 ns_view: ns_view.cast::<c_void>(),
                 size: size(DevicePixels(pixel_w), DevicePixels(pixel_h)),
             })),
-            last_surface_config: Cell::new(None),
-            pending_surface_size: Cell::new(None),
-            last_frame_request: Cell::new(None),
+            surface_debounce: ResizeDebounce::default(),
+            frame_throttle: FrameThrottle::default(),
             dropped_frames: AtomicUsize::new(0),
-            coalesced_frames: AtomicUsize::new(0),
             parameters: AuParameterTree::with_default_plugin_params(),
         }
     }
@@ -216,28 +170,24 @@ impl AuWindow {
             }),
             scale_factor: Cell::new(2.0),
             input_handler: RefCell::new(None),
-            request_frame_callback: RefCell::new(None),
-            input_callback: RefCell::new(None),
-            active_status_callback: RefCell::new(None),
-            hover_status_callback: RefCell::new(None),
-            resize_callback: RefCell::new(None),
-            moved_callback: RefCell::new(None),
-            should_close_callback: RefCell::new(None),
-            hit_test_callback: RefCell::new(None),
+            request_frame_callback: CallbackSlot::new(),
+            input_callback: CallbackSlot::new(),
+            active: TransitionCell::new(true),
+            hovered: TransitionCell::new(false),
+            resize_callback: CallbackSlot::new(),
+            moved_callback: CallbackSlot::new(),
+            should_close_callback: CallbackSlot::new(),
+            hit_test_callback: CallbackSlot::new(),
             close_callback: RefCell::new(None),
-            appearance_changed_callback: RefCell::new(None),
+            appearance_changed_callback: CallbackSlot::new(),
             mouse_position: Cell::new(Point::default()),
             modifiers: Cell::new(Modifiers::default()),
-            is_active: Cell::new(true),
-            is_hovered: Cell::new(false),
             renderer: Mutex::new(None),
             gpu_context: Rc::new(RefCell::new(None)),
             pending_gpu_init: Mutex::new(None),
-            last_surface_config: Cell::new(None),
-            pending_surface_size: Cell::new(None),
-            last_frame_request: Cell::new(None),
+            surface_debounce: ResizeDebounce::default(),
+            frame_throttle: FrameThrottle::default(),
             dropped_frames: AtomicUsize::new(0),
-            coalesced_frames: AtomicUsize::new(0),
             parameters: AuParameterTree::with_default_plugin_params(),
         }
     }
@@ -299,60 +249,20 @@ impl AuWindow {
 
     /// Apply a new drawable size to the wgpu surface.
     ///
-    /// The expensive `surface.configure` is debounced: at most one
-    /// reconfigure per [`RESIZE_DEBOUNCE_INTERVAL`]. A size that arrives
-    /// inside the window is stashed in `pending_surface_size` and picked up
-    /// by `apply_pending_surface_size()` on the next drawn frame, so the
+    /// The expensive `surface.configure` is debounced through the shared
+    /// policy; a size that arrives inside the window is stashed and picked
+    /// up by `apply_pending_surface_size()` on the next drawn frame, so the
     /// surface always converges to the latest host size.
     fn reconfigure_surface(&self, drawable: Size<DevicePixels>) {
-        let now = Instant::now();
-        if self
-            .last_surface_config
-            .get()
-            .is_some_and(|last| now.duration_since(last) < RESIZE_DEBOUNCE_INTERVAL)
-        {
-            self.pending_surface_size.set(Some(drawable));
-            return;
-        }
-        if self.try_reconfigure_surface(drawable) {
-            self.last_surface_config.set(Some(now));
-        } else {
-            self.pending_surface_size.set(Some(drawable));
-        }
+        self.surface_debounce
+            .submit(drawable, |size| self.try_reconfigure_surface(size));
     }
 
     /// Apply a debounced resize ahead of drawing, if one is pending and the
     /// debounce window has elapsed.
     fn apply_pending_surface_size(&self) {
-        let Some(drawable) = self.pending_surface_size.take() else {
-            return;
-        };
-        let now = Instant::now();
-        if self
-            .last_surface_config
-            .get()
-            .is_some_and(|last| now.duration_since(last) < RESIZE_DEBOUNCE_INTERVAL)
-        {
-            self.pending_surface_size.set(Some(drawable));
-            return;
-        }
-        if self.try_reconfigure_surface(drawable) {
-            self.last_surface_config.set(Some(now));
-        } else {
-            self.pending_surface_size.set(Some(drawable));
-        }
-    }
-
-    /// Register this window in the global `AU_WINDOW` slot.
-    /// Called from `AuPlatform::open_window` after Boxing.
-    pub(crate) fn register_global(boxed: &AuWindow) {
-        AuWindowPtr::assert_main_thread();
-        let ptr: *const AuWindow = boxed;
-        if let Ok(mut guard) = AU_WINDOW.lock() {
-            *guard = Some(AuWindowPtr(ptr));
-        }
-        let msg = format!("SOTF AuWindow: registered at {ptr:p}");
-        nslog_verbose(msg.as_bytes());
+        self.surface_debounce
+            .poll(|size| self.try_reconfigure_surface(size));
     }
 
     /// Request a frame render (called from Swift via FFI)
@@ -360,52 +270,21 @@ impl AuWindow {
         // Coalesce CVDisplayLink overdrive: ticks arriving faster than the
         // throttle interval are counted and dropped instead of queueing
         // redundant GPUI frame work.
-        let now = Instant::now();
-        if let Some(last) = self.last_frame_request.get()
-            && now.duration_since(last) < FRAME_REQUEST_MIN_INTERVAL
-        {
-            self.coalesced_frames.fetch_add(1, Ordering::Relaxed);
+        if !self.frame_throttle.should_forward() {
             return;
         }
-        self.last_frame_request.set(Some(now));
-        let cb = self.request_frame_callback.borrow_mut().take();
-        if let Some(mut cb) = cb {
-            cb(RequestFrameOptions::default());
-            let mut slot = self.request_frame_callback.borrow_mut();
-            if slot.is_none() {
-                *slot = Some(cb);
-            }
-        }
+        self.request_frame_callback
+            .emit(RequestFrameOptions::default());
     }
 
     /// Update host focus state and notify GPUI only on a transition.
     pub fn update_active_status(&self, is_active: bool) {
-        if self.is_active.replace(is_active) == is_active {
-            return;
-        }
-        let callback = self.active_status_callback.borrow_mut().take();
-        if let Some(mut callback) = callback {
-            callback(is_active);
-            let mut slot = self.active_status_callback.borrow_mut();
-            if slot.is_none() {
-                *slot = Some(callback);
-            }
-        }
+        self.active.update(is_active);
     }
 
     /// Update pointer-in-view state and notify GPUI only on a transition.
     pub fn update_hover_status(&self, is_hovered: bool) {
-        if self.is_hovered.replace(is_hovered) == is_hovered {
-            return;
-        }
-        let callback = self.hover_status_callback.borrow_mut().take();
-        if let Some(mut callback) = callback {
-            callback(is_hovered);
-            let mut slot = self.hover_status_callback.borrow_mut();
-            if slot.is_none() {
-                *slot = Some(callback);
-            }
-        }
+        self.hovered.update(is_hovered);
     }
 
     /// Handle resize from the host (called from Swift via FFI)
@@ -453,14 +332,7 @@ impl AuWindow {
         self.reconfigure_surface(drawable);
 
         // Fire resize callback
-        let cb = self.resize_callback.borrow_mut().take();
-        if let Some(mut cb) = cb {
-            cb(new_size, scale);
-            let mut slot = self.resize_callback.borrow_mut();
-            if slot.is_none() {
-                *slot = Some(cb);
-            }
-        }
+        self.resize_callback.emit((new_size, scale));
     }
 
     /// Dispatch a mouse event (called from Swift via FFI)
@@ -485,9 +357,9 @@ impl AuWindow {
             _ => {}
         }
 
-        if let Some(callback) = self.input_callback.borrow_mut().as_mut() {
-            callback(event);
-        }
+        // The dispatch result is informational; embedded input has no
+        // further propagation target.
+        let _ = self.input_callback.emit_with(event);
     }
 
     pub fn insert_text(&self, text: &str) {
@@ -538,7 +410,7 @@ impl AuWindow {
 
     /// `CVDisplayLink` ticks coalesced by the frame-request throttle.
     pub fn coalesced_frames(&self) -> usize {
-        self.coalesced_frames.load(Ordering::Relaxed)
+        self.frame_throttle.coalesced()
     }
 
     /// Number of parameters in the plugin's parameter tree.
@@ -696,11 +568,11 @@ impl PlatformWindow for AuWindow {
     fn activate(&self) {}
 
     fn is_active(&self) -> bool {
-        self.is_active.get()
+        self.active.get()
     }
 
     fn is_hovered(&self) -> bool {
-        self.is_hovered.get()
+        self.hovered.get()
     }
 
     fn set_title(&mut self, _title: &str) {}
@@ -720,43 +592,47 @@ impl PlatformWindow for AuWindow {
     }
 
     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
-        *self.request_frame_callback.borrow_mut() = Some(callback);
+        self.request_frame_callback.set(callback);
     }
 
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>) {
-        *self.input_callback.borrow_mut() = Some(callback);
+        self.input_callback.set(callback);
     }
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
-        *self.active_status_callback.borrow_mut() = Some(callback);
+        self.active.on_change(callback);
     }
 
     fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {
-        *self.hover_status_callback.borrow_mut() = Some(callback);
+        self.hovered.on_change(callback);
     }
 
-    fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
-        *self.resize_callback.borrow_mut() = Some(callback);
+    fn on_resize(&self, mut callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
+        self.resize_callback
+            .set(move |(size, scale)| callback(size, scale));
     }
 
-    fn on_moved(&self, callback: Box<dyn FnMut()>) {
-        *self.moved_callback.borrow_mut() = Some(callback);
+    fn on_moved(&self, mut callback: Box<dyn FnMut()>) {
+        self.moved_callback.set(move |()| callback());
     }
 
-    fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
-        *self.should_close_callback.borrow_mut() = Some(callback);
+    fn on_should_close(&self, mut callback: Box<dyn FnMut() -> bool>) {
+        self.should_close_callback.set(move |()| callback());
     }
 
-    fn on_hit_test_window_control(&self, callback: Box<dyn FnMut() -> Option<WindowControlArea>>) {
-        *self.hit_test_callback.borrow_mut() = Some(callback);
+    fn on_hit_test_window_control(
+        &self,
+        mut callback: Box<dyn FnMut() -> Option<WindowControlArea>>,
+    ) {
+        self.hit_test_callback.set(move |()| callback());
     }
 
     fn on_close(&self, callback: Box<dyn FnOnce()>) {
         *self.close_callback.borrow_mut() = Some(callback);
     }
 
-    fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
-        *self.appearance_changed_callback.borrow_mut() = Some(callback);
+    fn on_appearance_changed(&self, mut callback: Box<dyn FnMut()>) {
+        self.appearance_changed_callback.set(move |()| callback());
     }
 
     fn draw(&self, scene: &Scene) {
@@ -812,6 +688,7 @@ impl PlatformWindow for AuWindow {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::window::with_au_window;
 
     fn empty_window() -> AuWindow {
         AuWindow {
@@ -822,28 +699,24 @@ mod tests {
             }),
             scale_factor: Cell::new(2.0),
             input_handler: RefCell::new(None),
-            request_frame_callback: RefCell::new(None),
-            input_callback: RefCell::new(None),
-            active_status_callback: RefCell::new(None),
-            hover_status_callback: RefCell::new(None),
-            resize_callback: RefCell::new(None),
-            moved_callback: RefCell::new(None),
-            should_close_callback: RefCell::new(None),
-            hit_test_callback: RefCell::new(None),
+            request_frame_callback: CallbackSlot::new(),
+            input_callback: CallbackSlot::new(),
+            active: TransitionCell::new(true),
+            hovered: TransitionCell::new(false),
+            resize_callback: CallbackSlot::new(),
+            moved_callback: CallbackSlot::new(),
+            should_close_callback: CallbackSlot::new(),
+            hit_test_callback: CallbackSlot::new(),
             close_callback: RefCell::new(None),
-            appearance_changed_callback: RefCell::new(None),
+            appearance_changed_callback: CallbackSlot::new(),
             mouse_position: Cell::new(Point::default()),
             modifiers: Cell::new(Modifiers::default()),
-            is_active: Cell::new(true),
-            is_hovered: Cell::new(false),
             renderer: Mutex::new(None),
             gpu_context: Rc::new(RefCell::new(None)),
             pending_gpu_init: Mutex::new(None),
-            last_surface_config: Cell::new(None),
-            pending_surface_size: Cell::new(None),
-            last_frame_request: Cell::new(None),
+            surface_debounce: ResizeDebounce::default(),
+            frame_throttle: FrameThrottle::default(),
             dropped_frames: AtomicUsize::new(0),
-            coalesced_frames: AtomicUsize::new(0),
             parameters: AuParameterTree::with_default_plugin_params(),
         }
     }
@@ -862,12 +735,12 @@ mod tests {
         let hover_transitions = Rc::new(RefCell::new(Vec::new()));
         let active_capture = Rc::clone(&active_transitions);
         let hover_capture = Rc::clone(&hover_transitions);
-        *window.active_status_callback.borrow_mut() = Some(Box::new(move |active| {
+        window.active.on_change(move |active| {
             active_capture.borrow_mut().push(active);
-        }));
-        *window.hover_status_callback.borrow_mut() = Some(Box::new(move |hovered| {
+        });
+        window.hovered.on_change(move |hovered| {
             hover_capture.borrow_mut().push(hovered);
-        }));
+        });
 
         window.update_active_status(false);
         window.update_active_status(false);
@@ -903,8 +776,8 @@ mod tests {
         window.handle_resize(800.0, 600.0, 2.0);
         window.handle_resize(1024.0, 768.0, 2.0);
         let pending = window
-            .pending_surface_size
-            .get()
+            .surface_debounce
+            .pending()
             .expect("resize should stash a pending size");
         assert_eq!(pending, size(DevicePixels(2048), DevicePixels(1536)));
         // Bounds still track the latest host size immediately.
@@ -916,8 +789,9 @@ mod tests {
         let window = empty_window();
         let frames = Rc::new(Cell::new(0usize));
         let capture = Rc::clone(&frames);
-        *window.request_frame_callback.borrow_mut() =
-            Some(Box::new(move |_| capture.set(capture.get() + 1)));
+        window
+            .request_frame_callback
+            .set(move |_| capture.set(capture.get() + 1));
         window.request_frame();
         window.request_frame();
         window.request_frame();

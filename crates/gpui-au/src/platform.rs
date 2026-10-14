@@ -135,7 +135,7 @@ impl Platform for AuPlatform {
         use crate::helpers::nslog_verbose;
         nslog_verbose(b"SOTF AuPlatform::open_window: entry");
         let window = Box::new(AuWindow::new(handle, options));
-        AuWindow::register_global(&window);
+        super::window::register_au_window(&window);
         nslog_verbose(b"SOTF AuPlatform::open_window: done");
         Ok(window)
     }

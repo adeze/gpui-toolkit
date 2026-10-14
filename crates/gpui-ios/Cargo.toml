@@ -42,6 +42,9 @@ serde_json = { workspace = true }
 # GPUI core (from workspace — same Zed rev as desktop)
 gpui = { workspace = true }
 
+# Shared foreign-parent embedding core (registry, throttle, debounce, slots)
+gpui-foreign-parent = { workspace = true }
+
 # wgpu renderer from Zed (Metal backend on iOS)
 gpui_wgpu = { workspace = true }
 wgpu = { workspace = true }

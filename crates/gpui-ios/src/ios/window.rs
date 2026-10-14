@@ -13,6 +13,7 @@
 mod accessibility;
 mod consts;
 mod fallback_atlas;
+mod foreign_parent;
 mod handle;
 mod ios_raw_handles;
 mod ios_window;
@@ -23,4 +24,5 @@ mod touch;
 mod types;
 
 pub use consts::set_status_bar_style;
+pub(crate) use foreign_parent::*;
 pub(crate) use ios_window::*;
