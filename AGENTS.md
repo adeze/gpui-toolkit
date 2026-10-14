@@ -17,6 +17,8 @@ The `gpui-toolkit` workspace contains several related crates for building GPUI a
 | `gpui-design` | Platform-adaptive design system (Apple HIG, Material 3, Fluent, Neutral) — spacing, corners, typography, animation | [README](gpui-design/README.md) |
 | `gpui-foreign-parent` | Platform-neutral core for foreign-parent editor embedding (registry, frame throttle, resize debounce, callback slots, FFI helpers) | [contract](docs/foreign-parent-editor-embedding.md) |
 | `gpui-web-foreign` | Browser binding: page-owned canvas host shell (observers, rAF pump, listeners) plus DOM input tables; renderer provider needs the §16 fork change | [contract](docs/foreign-parent-editor-embedding.md) |
+| `gpui-win-foreign` | Windows binding: GPUI editors in host-owned HWNDs (VST3); WS_CHILD creation hook in the gpui_windows fork | [contract](docs/foreign-parent-editor-embedding.md) |
+| `gpui-linux-foreign` | Linux binding: X11 child windows (VST3/CLAP-x11) and Wayland subsurfaces (CLAP-wayland); creation hooks in the gpui_linux fork | [contract](docs/foreign-parent-editor-embedding.md) |
 | `gpui-ios` | iOS platform backend (Metal rendering, touch, text) | [README](gpui-ios/README.md), [AGENTS.md](gpui-ios/AGENTS.md) |
 | `gpui-pretext` | High-performance text measurement and multiline layout (Rust port of chenglou/pretext) | [README](gpui-pretext/README.md) |
 | `gpui-profiler` | Lightweight allocation profiling utilities for interactive UI hot paths | [README](gpui-profiler/README.md) |

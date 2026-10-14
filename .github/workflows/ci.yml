@@ -178,6 +178,38 @@ jobs:
           cargo test -p gpui-au
           clang -fsyntax-only -x c crates/gpui-au/include/gpui_au.h
 
+  windows-foreign-check:
+    name: Windows foreign-parent backend (VST3)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test HWND embedding and C ABI
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo test -p gpui-win-foreign
+
+  linux-foreign-check:
+    name: Linux foreign-parent backend (VST3/CLAP)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install link-time backend libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libfontconfig1-dev \
+            libfreetype6-dev \
+            libwayland-dev \
+            libx11-xcb-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev
+      - name: Test X11/Wayland embedding and C ABI
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo test -p gpui-linux-foreign
+
   tvos-platform-check:
     name: tvOS backend compile
     runs-on: macos-latest

@@ -231,8 +231,8 @@ input event source, main-thread assertion, modifier/key tables.
 | iOS plugin view (AUv3) | `UIView *` | `CAMetalLayer` + wgpu Metal | `CADisplayLink` → `request_frame` | Shared view classes (no per-event FFI): taps → deferred mouse down/up, drags → scroll + mouse move, two-finger → native `Pinch`; `UIKeyInput`/`UITextInput` as on the app path | Implemented (`gpui-ios`, M3) |
 | Android embedded view | `Surface` holder (`ANativeWindow`) | wgpu Vulkan/GLES surface | `Choreographer` → `request_frame` | Per-pointer `MotionEvent` → native `Pointer` pipeline via JNI (no history batching); keys as down/up + unicode; IME via the shared queue; hover reports active (adapter parity); renderer init is synchronous on create like the app path, so hosts should create off the UI thread | Implemented (`gpui-android`, M5a; host sample `GpuiForeign.java`) |
 | Browser canvas | `HtmlCanvasElement` | `wgpu` WebGPU canvas surface | `requestAnimationFrame` → `request_frame` | `key.js` code tables + pointer/keyboard/composition dispatch (pure-DOM `input.rs`, no `gpui_web` fork yet) | Implemented as host shell + renderer seam (`gpui-web-foreign`, M5b; headless until the §16 `gpui_web` fork patch lands). WebGPU-only with async device init and one-frame-behind readback (see AGENTS.md testing notes) — the binding must not assume blocking `device.poll` |
-| Windows plugin view (VST3) | `HWND` | wgpu DX12 surface | Timer/DWM → `request_frame` | `WM_*` message forwarding | Planned; no backend in tree |
-| Linux plugin view (VST3/CLAP) | X11 `Window` / Wayland surface | wgpu Vulkan surface | Timer → `request_frame` | XInput/Wayland event forwarding | Planned; no backend in tree |
+| Windows plugin view (VST3) | `HWND` | `WS_CHILD` + DirectX renderer | Host timer/DWM → `request_frame` | Host `GetMessage` loop dispatches to the child `WndProc` (no input FFI); focus/hover forwarded transition-only | Implemented (`gpui-win-foreign` + `gpui_windows` `WS_CHILD` path, M6) |
+| Linux plugin view (VST3/CLAP) | X11 `Window` / Wayland `wl_surface` | X11 child window / `wl_subsurface` + wgpu surface | Host timer → `request_frame` | X11: child-window events via the shared X11 client; Wayland: host-pumped `frame` callbacks; host input-forwarding FFI for both | Implemented (`gpui-linux-foreign` + `gpui_linux` child/subsurface paths, M6; Wayland gaps: touch, key-repeat, text-input, cursor-shape, clipboard, output tracking) |
 
 Each binding documents its touch mapping choice (touch-as-mouse vs
 native touch inputs), its key-table source, and any host threading
@@ -348,8 +348,12 @@ or a documented host-side reason it cannot be tested in-tree:
   `host.rs` page-owned canvas shell with renderer seam); 9 host
   tests pass, wasm target check clean. Headless until the §16
   `gpui_web` fork patch lands.
-- M6. Windows/Linux bindings when a backend exists in-tree (deferred by
-  request).
+- M6. ~~Windows/Linux bindings when a backend exists in-tree.~~ Done:
+  fork patches (`gpui_windows` `WS_CHILD` path, `gpui_linux` X11-child +
+  Wayland-subsurface paths) plus thin `gpui-win-foreign` /
+  `gpui-linux-foreign` crates; 8 + 13 host tests pass, win/linux
+  target checks clean. Runtime behavior awaits host validation
+  (Gitea runners + real DAW pump).
 - Ordering constraint: M1 before M3; M2 may land incrementally
   behind the existing FFI surface (no host-visible signature changes
   until M4).
