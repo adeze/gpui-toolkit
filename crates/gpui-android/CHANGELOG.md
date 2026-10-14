@@ -1,5 +1,13 @@
 # Unreleased
 
+# 0.11.0
+
+## Added
+
+- Added the Android `Surface` foreign-parent binding (keyed editors, `Sync`
+  core policies, JNI entries, surface re-attach) plus the `GpuiForeign.java`
+  host sample.
+
 # 0.10.6
 
 ## Added

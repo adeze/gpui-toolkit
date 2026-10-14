@@ -296,12 +296,27 @@ mod tests {
 
     #[test]
     fn click_counts_chain_inside_the_window() {
-        assert_eq!(next_click_count(1, Some(MouseButton::Left), MouseButton::Left, 100, 2.0), 2);
-        assert_eq!(next_click_count(2, Some(MouseButton::Left), MouseButton::Left, 100, 2.0), 3);
+        assert_eq!(
+            next_click_count(1, Some(MouseButton::Left), MouseButton::Left, 100, 2.0),
+            2
+        );
+        assert_eq!(
+            next_click_count(2, Some(MouseButton::Left), MouseButton::Left, 100, 2.0),
+            3
+        );
         // Different button, slow repeat, or travel restarts at 1.
-        assert_eq!(next_click_count(3, Some(MouseButton::Left), MouseButton::Right, 100, 0.0), 1);
-        assert_eq!(next_click_count(3, Some(MouseButton::Left), MouseButton::Left, 900, 0.0), 1);
-        assert_eq!(next_click_count(3, Some(MouseButton::Left), MouseButton::Left, 100, 9.0), 1);
+        assert_eq!(
+            next_click_count(3, Some(MouseButton::Left), MouseButton::Right, 100, 0.0),
+            1
+        );
+        assert_eq!(
+            next_click_count(3, Some(MouseButton::Left), MouseButton::Left, 900, 0.0),
+            1
+        );
+        assert_eq!(
+            next_click_count(3, Some(MouseButton::Left), MouseButton::Left, 100, 9.0),
+            1
+        );
         assert_eq!(next_click_count(0, None, MouseButton::Left, 0, 0.0), 1);
     }
 

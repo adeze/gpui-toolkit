@@ -31,7 +31,9 @@ use crate::editor::{
     pin_app_cell, register_editor, unpin_app_cell, unregister_editor, with_editor,
 };
 use crate::geometry::ForeignBounds;
-use crate::input::{modifiers_from_bits, next_click_count, resolve_key_name, wayland_button_to_gpui};
+use crate::input::{
+    modifiers_from_bits, next_click_count, resolve_key_name, wayland_button_to_gpui,
+};
 
 /// Neutral placeholder root for the C entry point.
 ///
@@ -374,8 +376,14 @@ pub(crate) unsafe fn linux_wayland_create_placeholder(
 ) -> *mut LinuxForeignContext {
     // SAFETY: forwarded from the caller contract (see the function docs).
     unsafe {
-        linux_wayland_create_with(display, parent_surface, width, height, scale, label, |_, cx| {
-            cx.new(|_| PlaceholderRootView)
-        })
+        linux_wayland_create_with(
+            display,
+            parent_surface,
+            width,
+            height,
+            scale,
+            label,
+            |_, cx| cx.new(|_| PlaceholderRootView),
+        )
     }
 }

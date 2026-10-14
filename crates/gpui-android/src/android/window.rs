@@ -34,12 +34,12 @@
 
 use anyhow::{Context as _, Result};
 use futures::channel::oneshot;
-use gpui_foreign_parent::sync::SyncResizeDebounce;
 use gpui::{
     self, AtlasKey, AtlasTile, Capslock, DispatchEventResult, GpuSpecs, Modifiers, PlatformAtlas,
     PlatformDisplay, PlatformInputHandler, PlatformWindow, PromptButton, PromptLevel,
     RequestFrameOptions, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
 };
+use gpui_foreign_parent::sync::SyncResizeDebounce;
 use gpui_wgpu::{GpuContext, WgpuRenderer, WgpuSurfaceConfig, wgpu};
 use jni::objects::{Global, JObject};
 use parking_lot::Mutex;
@@ -789,9 +789,7 @@ impl AndroidWindow {
             state.last_ime_bounds = None;
             state.resize_callback.take()
         };
-        debounce.submit((width, height), |(w, h)| {
-            self.reconfigure_surface(w, h)
-        });
+        debounce.submit((width, height), |(w, h)| self.reconfigure_surface(w, h));
         if let Some(mut cb) = resize_cb {
             cb(
                 Size {

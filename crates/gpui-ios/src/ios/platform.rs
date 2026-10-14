@@ -154,7 +154,9 @@ impl Platform for IosPlatform {
             let window = Box::new(IosWindow::new_in_parent_view(handle, options, info)?);
             // SAFETY: `window` names the live boxed `IosWindow` outliving
             // registration; the registry asserts the main thread.
-            unsafe { super::ffi::foreign_registry().register(editor_id, (&raw const *window).cast()) };
+            unsafe {
+                super::ffi::foreign_registry().register(editor_id, (&raw const *window).cast())
+            };
             window.register_foreign_with_ffi();
             return Ok(window);
         }

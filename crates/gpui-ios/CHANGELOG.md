@@ -1,5 +1,14 @@
 # Unreleased
 
+# 0.11.0
+
+## Added
+
+- Added the iOS AUv3 `UIView` foreign-parent binding
+  (`IosWindow::new_in_parent_view`, `gpui_ios_foreign_*` FFI, synchronous
+  `run`, pending-parent routing) against the shared core; touch and
+  keyboard route through the shared view classes.
+
 # 0.10.14
 
 ## Added

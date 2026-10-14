@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- Foreign-parent editor embedding stack (M1-M6): new `gpui-foreign-parent`
+  core plus AU/iOS/Android/wasm/Windows/Linux bindings, all at 0.11.0;
+  `gpui-au`, `gpui-ios`, and `gpui-android` moved to 0.11.0 with the new
+  embedding APIs. Contract: `docs/foreign-parent-editor-embedding.md`.
+
 ## 0.10.33 - 2026-10-09
 
 ### Accessibility

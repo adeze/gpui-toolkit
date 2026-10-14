@@ -48,11 +48,7 @@ pub fn validate_geometry(width: f32, height: f32, scale: f32) -> Option<ForeignG
 /// `max(1, …)` keeps zero-area hosts from producing zero drawables.
 #[must_use]
 pub fn drawable_size(width: f32, height: f32, scale: f32) -> (u32, u32) {
-    let axis = |logical: f32| {
-        (logical * scale)
-            .round()
-            .clamp(1.0, u32::MAX as f32) as u32
-    };
+    let axis = |logical: f32| (logical * scale).round().clamp(1.0, u32::MAX as f32) as u32;
     (axis(width), axis(height))
 }
 

@@ -108,14 +108,8 @@ mod tests {
         let mut out = [0u8; 8];
         let mut written = 0usize;
         // SAFETY: `out` has room for the full payload.
-        let required = unsafe {
-            fill_out_buffer(
-                &bytes,
-                out.as_mut_ptr(),
-                out.len(),
-                &raw mut written,
-            )
-        };
+        let required =
+            unsafe { fill_out_buffer(&bytes, out.as_mut_ptr(), out.len(), &raw mut written) };
         assert_eq!(required, 4);
         assert_eq!(written, 4);
         assert_eq!(&out[..4], &[1u8, 2, 3, 4]);
@@ -127,14 +121,8 @@ mod tests {
         let mut out = [0u8; 2];
         let mut written = 0usize;
         // SAFETY: `out` has room for `capacity` bytes.
-        let required = unsafe {
-            fill_out_buffer(
-                &bytes,
-                out.as_mut_ptr(),
-                out.len(),
-                &raw mut written,
-            )
-        };
+        let required =
+            unsafe { fill_out_buffer(&bytes, out.as_mut_ptr(), out.len(), &raw mut written) };
         assert_eq!(required, 4);
         assert_eq!(written, 2);
         assert_eq!(out, [1u8, 2]);
@@ -145,9 +133,8 @@ mod tests {
         let bytes = vec![7u8];
         let mut out = [0u8; 1];
         // SAFETY: `out` has room; null `written` is explicitly accepted.
-        let required = unsafe {
-            fill_out_buffer(&bytes, out.as_mut_ptr(), out.len(), std::ptr::null_mut())
-        };
+        let required =
+            unsafe { fill_out_buffer(&bytes, out.as_mut_ptr(), out.len(), std::ptr::null_mut()) };
         assert_eq!(required, 1);
         assert_eq!(out, [7u8]);
     }

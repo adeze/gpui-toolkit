@@ -249,7 +249,14 @@ pub unsafe extern "C" fn gpui_linux_x11_key(
     if let Some(editor_id) = editor_id(context) {
         // SAFETY: null or a valid string by contract; copied out immediately.
         let text = unsafe { optional_c_string(text) };
-        linux_x11_key(editor_id, keysym, pressed, is_repeat, text.as_deref(), state_mask);
+        linux_x11_key(
+            editor_id,
+            keysym,
+            pressed,
+            is_repeat,
+            text.as_deref(),
+            state_mask,
+        );
     }
 }
 

@@ -75,14 +75,9 @@ fn main() {
     // SAFETY: a null view is explicitly rejected without dereference; a
     // real host passes a live `NSView` on the main thread instead.
     let context = unsafe {
-        gpui_au_create_with(
-            std::ptr::null_mut(),
-            320.0,
-            200.0,
-            2.0,
-            "demo",
-            |_, cx| cx.new(|_| AuRootView::new("demo")),
-        )
+        gpui_au_create_with(std::ptr::null_mut(), 320.0, 200.0, 2.0, "demo", |_, cx| {
+            cx.new(|_| AuRootView::new("demo"))
+        })
     };
     assert!(context.is_null());
     println!("injection call shape OK; null view rejected as designed");

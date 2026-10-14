@@ -336,9 +336,15 @@ mod tests {
         assert_eq!(clicks.register_click(at, 1000.0), 1);
         assert_eq!(clicks.register_click(at, 1200.0), 2);
         // Too far away: new chain.
-        assert_eq!(clicks.register_click(point(px(100.0), px(100.0)), 1300.0), 1);
+        assert_eq!(
+            clicks.register_click(point(px(100.0), px(100.0)), 1300.0),
+            1
+        );
         // Too late: new chain.
-        assert_eq!(clicks.register_click(point(px(100.0), px(100.0)), 2000.0), 1);
+        assert_eq!(
+            clicks.register_click(point(px(100.0), px(100.0)), 2000.0),
+            1
+        );
     }
 
     #[test]

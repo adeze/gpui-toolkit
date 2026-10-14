@@ -201,8 +201,7 @@ pub(super) fn build_body<T: 'static>(
         .skip(virtual_window.start)
         .take(virtual_window.len())
     {
-        let is_selected =
-            !selected_indices.is_empty() && selected_indices.contains(&row_idx);
+        let is_selected = !selected_indices.is_empty() && selected_indices.contains(&row_idx);
         let mut row_el = div()
             .id(ElementId::named_usize(table_name.clone(), row_idx))
             .flex()

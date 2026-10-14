@@ -105,10 +105,7 @@ impl ForeignParentState {
     }
 
     /// Apply a stashed drawable size ahead of drawing, if due.
-    pub(crate) fn poll_surface_size(
-        &self,
-        apply: impl FnOnce(Size<DevicePixels>) -> bool,
-    ) {
+    pub(crate) fn poll_surface_size(&self, apply: impl FnOnce(Size<DevicePixels>) -> bool) {
         self.debounce.poll(apply);
     }
 
@@ -356,8 +353,7 @@ impl IosWindow {
         // constructor; `layer` messaging uses valid selectors.
         unsafe {
             let layer: *mut Object = msg_send![self.view, layer];
-            let _: () =
-                msg_send![layer, setContentsScale: scale as core_graphics::base::CGFloat];
+            let _: () = msg_send![layer, setContentsScale: scale as core_graphics::base::CGFloat];
             let frame = core_graphics::geometry::CGRect {
                 origin: core_graphics::geometry::CGPoint { x: 0.0, y: 0.0 },
                 size: core_graphics::geometry::CGSize {

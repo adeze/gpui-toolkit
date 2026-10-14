@@ -80,7 +80,9 @@ fn run_visual_capture(args: Vec<String>) {
                     match (w.parse::<u32>(), h.parse::<u32>()) {
                         (Ok(w), Ok(h)) if w > 0 && h > 0 => viewport_override = Some((w, h)),
                         _ => {
-                            eprintln!("error: --viewport expects WIDTHxHEIGHT with positive integers");
+                            eprintln!(
+                                "error: --viewport expects WIDTHxHEIGHT with positive integers"
+                            );
                             std::process::exit(2);
                         }
                     }

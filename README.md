@@ -85,10 +85,12 @@ Two open source examples:
 | [gpui-d3rs](./crates/gpui-d3rs/) | D3.js-inspired visualization primitives: scales, shapes, colors, geo projections, force layouts, Delaunay/Voronoi, GPU 2D, and GPU 3D. |
 | [gpui-design](./crates/gpui-design/) | Platform-adaptive design system tokens for spacing, corners, typography, animation, and GPUI integration. |
 | [gpui-design-tools](./crates/gpui-design-tools/) | CLI tooling for exporting, importing, and validating design tokens and conformance reports. |
+| [gpui-foreign-parent](./crates/gpui-foreign-parent/) | Platform-neutral core for foreign-parent editor embedding: editor registry, frame throttle, resize debounce, callback slots, and FFI helpers. |
 | [gpui-hello-web](./crates/gpui-hello-web/) | Minimal wasm/browser spike app running GPUI on the vendored `gpui_web` WebGPU backend via Trunk. |
 | [gpui-ios](./crates/gpui-ios/) | iOS/tvOS platform backend for GPUI with Metal rendering, touch input, text input, accessibility, platform views, and hot reload hooks. |
 | [gpui-keybinding](./crates/gpui-keybinding/) | Reusable keybinding framework with editor-style preset support for GPUI applications. |
 | [gpui-layout-expr](./crates/gpui-layout-expr/) | Compact layout-expression AST, parser, and validation shared by the CLI and the `layout!` macro. |
+| [gpui-linux-foreign](./crates/gpui-linux-foreign/) | Linux foreign-parent binding: GPUI editors in host-owned X11 windows (VST3/CLAP) and Wayland subsurfaces (CLAP). |
 | [gpui-miniapp](./crates/gpui-miniapp/) | Small application shell used by examples and showcases to select the right GPUI platform backend. |
 | [gpui-pretext](./crates/gpui-pretext/) | High-performance text measurement and multiline layout utilities. |
 | [gpui-profiler](./crates/gpui-profiler/) | Lightweight allocation profiling and hot-path regression utilities. |
@@ -99,6 +101,8 @@ Two open source examples:
 | [gpui-themes](./crates/gpui-themes/) | Theme editor and theme showcase infrastructure for GPUI applications. |
 | [gpui-ui-kit](./crates/gpui-ui-kit/) | Reusable UI component library: buttons, inputs, dialogs, menus, tabs, tables, QR, command palette, sidebar, wizard, workflow canvas, and more. |
 | [gpui-ui-kit-macros](./crates/gpui-ui-kit-macros/) | Procedural macros used by `gpui-ui-kit`, including builder and theme derivation helpers. |
+| [gpui-web-foreign](./crates/gpui-web-foreign/) | Browser foreign-parent binding: GPUI editors in page-owned canvases, with DOM input tables and a renderer-provider seam. |
+| [gpui-win-foreign](./crates/gpui-win-foreign/) | Windows foreign-parent binding: GPUI editors in host-owned HWNDs (VST3) via a WS_CHILD creation path. |
 | [gpui-toolkit](./crates/gpui-toolkit/) | Aggregate crate and machine-readable release, stability, and vendored-patch policy manifests. |
 | [gpui-toolkit-cli](./crates/gpui-toolkit-cli/) | Unified `gpui-toolkit` CLI: component catalog, templates, themes, health checks, and layout tools for humans and agents. |
 | [gpui-showcase](./crates/gpui-showcase/) | Desktop component showcase application. |

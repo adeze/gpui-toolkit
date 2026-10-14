@@ -1,5 +1,15 @@
 # Unreleased
 
+# 0.11.0
+
+## Added
+
+- Rebased onto the shared `gpui-foreign-parent` core: single-key editor
+  registry, shared frame throttle / resize debounce / callback slots.
+- Added `gpui_au_create_with` for guest content injection; the C entry now
+  renders a neutral placeholder and the demo root view moved to
+  `examples/demo_root_view.rs`.
+
 # 0.10.10
 
 ## Added

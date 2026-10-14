@@ -141,7 +141,11 @@ pub fn create_editor_with_renderer(
     label: &str,
     renderer: impl ForeignRenderer + 'static,
 ) -> u32 {
-    create_editor_inner(canvas_id, label, Some(Box::new(renderer) as Box<dyn ForeignRenderer>))
+    create_editor_inner(
+        canvas_id,
+        label,
+        Some(Box::new(renderer) as Box<dyn ForeignRenderer>),
+    )
 }
 
 /// Attach (or replace) the renderer provider of a live editor.
@@ -483,9 +487,14 @@ fn install_canvas_listeners(editor_id: u32, canvas: &web_sys::HtmlCanvasElement)
         });
     });
 
-    listen(editor_id, &target, "pointerenter", move |_event: JsValue| {
-        push_hovered(editor_id, true);
-    });
+    listen(
+        editor_id,
+        &target,
+        "pointerenter",
+        move |_event: JsValue| {
+            push_hovered(editor_id, true);
+        },
+    );
 
     listen(editor_id, &target, "pointerleave", move |event: JsValue| {
         let event: web_sys::PointerEvent = event.unchecked_into();
@@ -595,20 +604,26 @@ fn install_input_listeners(editor_id: u32, input: &web_sys::HtmlInputElement) {
             let event: web_sys::CompositionEvent = event.unchecked_into();
             with_editor(editor_id, |editor| {
                 editor.with_renderer(|renderer| {
-                    renderer.composition(CompositionOp::SetMarked(event.data().unwrap_or_default()));
+                    renderer
+                        .composition(CompositionOp::SetMarked(event.data().unwrap_or_default()));
                 });
             });
         },
     );
 
-    listen(editor_id, &target, "compositionend", move |event: JsValue| {
-        let event: web_sys::CompositionEvent = event.unchecked_into();
-        with_editor(editor_id, |editor| {
-            editor.with_renderer(|renderer| {
-                renderer.composition(CompositionOp::Commit(event.data().unwrap_or_default()));
+    listen(
+        editor_id,
+        &target,
+        "compositionend",
+        move |event: JsValue| {
+            let event: web_sys::CompositionEvent = event.unchecked_into();
+            with_editor(editor_id, |editor| {
+                editor.with_renderer(|renderer| {
+                    renderer.composition(CompositionOp::Commit(event.data().unwrap_or_default()));
+                });
             });
-        });
-    });
+        },
+    );
 
     listen(editor_id, &target, "focus", move |_event: JsValue| {
         push_active(editor_id, true);
@@ -688,8 +703,7 @@ fn schedule_frame(editor_id: u32) {
                 schedule_frame(editor_id);
             }
         });
-        let Ok(raf_id) = window.request_animation_frame(closure.as_ref().unchecked_ref())
-        else {
+        let Ok(raf_id) = window.request_animation_frame(closure.as_ref().unchecked_ref()) else {
             console_error("gpui-web-foreign: requestAnimationFrame failed");
             return;
         };
@@ -700,9 +714,7 @@ fn schedule_frame(editor_id: u32) {
 
 fn tick_frame(editor_id: u32) {
     with_editor(editor_id, |editor| {
-        editor
-            .debounce
-            .poll(|size| forward_resize(editor_id, size));
+        editor.debounce.poll(|size| forward_resize(editor_id, size));
         if !editor.throttle.should_forward() {
             return;
         }

@@ -17,7 +17,9 @@ use super::{DEFAULT_FRAME_MIN_INTERVAL, DEFAULT_RESIZE_DEBOUNCE_INTERVAL};
 /// Guarded policy state is plain data (timestamps, sizes, flags), so a
 /// panic on another thread never invalidates it; failing open keeps
 /// frames flowing instead of wedging the host pump.
-fn unpoison<T>(guard: std::sync::LockResult<std::sync::MutexGuard<'_, T>>) -> std::sync::MutexGuard<'_, T> {
+fn unpoison<T>(
+    guard: std::sync::LockResult<std::sync::MutexGuard<'_, T>>,
+) -> std::sync::MutexGuard<'_, T> {
     guard.unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
@@ -224,10 +226,7 @@ mod tests {
             *unpoison(capture.lock()) = Some(size);
             true
         });
-        assert_eq!(
-            *unpoison(applied.lock()),
-            Some(1u32)
-        );
+        assert_eq!(*unpoison(applied.lock()), Some(1u32));
         assert_eq!(debounce.pending(), None);
     }
 

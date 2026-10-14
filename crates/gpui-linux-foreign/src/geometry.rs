@@ -102,7 +102,10 @@ mod tests {
     #[test]
     fn bounds_drawable_matches_the_free_function() {
         let bounds = ForeignBounds::new(101, 203, 1.5).expect("valid bounds");
-        assert_eq!(bounds.drawable(), drawable_size(101, 203, 1.5).expect("valid scale"));
+        assert_eq!(
+            bounds.drawable(),
+            drawable_size(101, 203, 1.5).expect("valid scale")
+        );
         assert_eq!(bounds.size(), (101, 203));
         assert_eq!(bounds.scale(), 1.5);
     }

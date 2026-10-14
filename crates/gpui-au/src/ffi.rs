@@ -695,14 +695,9 @@ mod tests {
     fn create_with_rejects_null_view() {
         // SAFETY: a null view is explicitly rejected without dereference.
         let context = unsafe {
-            gpui_au_create_with(
-                std::ptr::null_mut(),
-                320.0,
-                200.0,
-                2.0,
-                "test",
-                |_, cx| cx.new(|_| PlaceholderRootView),
-            )
+            gpui_au_create_with(std::ptr::null_mut(), 320.0, 200.0, 2.0, "test", |_, cx| {
+                cx.new(|_| PlaceholderRootView)
+            })
         };
         assert!(context.is_null());
     }

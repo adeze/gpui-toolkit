@@ -6,7 +6,10 @@ mod boxed_asset_source;
 mod consts;
 // FFI functions necessarily dereference raw pointers from C callers; every
 // dereference carries a SAFETY comment instead (mirrors gpui-au).
-#[allow(clippy::not_unsafe_ptr_arg_deref, reason = "FFI boundary: see SAFETY comments")]
+#[allow(
+    clippy::not_unsafe_ptr_arg_deref,
+    reason = "FFI boundary: see SAFETY comments"
+)]
 mod foreign_parent;
 mod gpui_mod;
 mod ios_app_state;

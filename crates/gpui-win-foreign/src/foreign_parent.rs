@@ -51,8 +51,8 @@ use gpui_foreign_parent::{
     EditorRegistry, FrameThrottle, ResizeDebounce, TransitionCell, optional_c_string,
 };
 use gpui_windows::{
-    ForeignParentInfo, ForeignWindow, WindowsPlatform, clear_pending_foreign, stash_pending_foreign,
-    take_opened_foreign,
+    ForeignParentInfo, ForeignWindow, WindowsPlatform, clear_pending_foreign,
+    stash_pending_foreign, take_opened_foreign,
 };
 
 use crate::policy::{ForeignGeometry, allocate_editor_id, validate_geometry};
@@ -395,10 +395,12 @@ pub extern "C" fn gpui_win_resize(context: *mut WinContext, width: f32, height: 
     };
     with_editor(editor_id, |editor| {
         editor.latest.set(geometry);
-        editor.debounce.submit((geometry.width, geometry.height), |(w, h)| {
-            editor.foreign.resize_foreign(w, h, geometry.scale);
-            true
-        });
+        editor
+            .debounce
+            .submit((geometry.width, geometry.height), |(w, h)| {
+                editor.foreign.resize_foreign(w, h, geometry.scale);
+                true
+            });
     });
 }
 

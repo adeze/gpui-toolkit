@@ -36,7 +36,10 @@ fn assert_main_thread() {
     // exist; the message takes no arguments and returns a `BOOL`.
     unsafe {
         let is_main: BOOL = msg_send![class!(NSThread), isMainThread];
-        assert!(is_main, "foreign iOS windows must be used on the main thread");
+        assert!(
+            is_main,
+            "foreign iOS windows must be used on the main thread"
+        );
     }
 }
 
@@ -316,14 +319,8 @@ mod tests {
         assert_eq!((dropped, coalesced), (usize::MAX, usize::MAX));
         gpui_ios_foreign_frame_stats(context, std::ptr::null_mut(), std::ptr::null_mut());
         assert!(
-            gpui_ios_foreign_create(
-                std::ptr::null_mut(),
-                320.0,
-                200.0,
-                2.0,
-                std::ptr::null()
-            )
-            .is_null()
+            gpui_ios_foreign_create(std::ptr::null_mut(), 320.0, 200.0, 2.0, std::ptr::null())
+                .is_null()
         );
     }
 

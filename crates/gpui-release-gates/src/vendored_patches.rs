@@ -108,11 +108,25 @@ fn cargo_lock_third_parties_rev() -> Option<String> {
         .map(|dir| dir.join("Cargo.lock"))
         .find(|lock| lock.is_file())?;
     let content = std::fs::read_to_string(lock).ok()?;
-    let prefix = format!("git+{SOTF_THIRD_PARTIES_GIT_URL}#");
-    content.lines().find_map(|line| {
-        let source = line.trim().strip_prefix("source = \"")?.strip_suffix('"')?;
-        source.strip_prefix(prefix.as_str()).map(str::to_string)
-    })
+    content.lines().find_map(lock_source_rev)
+}
+
+/// Extract the `sotf-3rdparties` revision from one lockfile `source` line,
+/// if that line names the repository. Accepts an optional `?query` fragment
+/// (e.g. `?branch=...`) between the URL and the `#rev` fragment.
+fn lock_source_rev(line: &str) -> Option<String> {
+    let base = format!("git+{SOTF_THIRD_PARTIES_GIT_URL}");
+    let source = line.trim().strip_prefix("source = \"")?.strip_suffix('"')?;
+    let rest = source.strip_prefix(base.as_str())?;
+    if !rest.starts_with('#') && !rest.starts_with('?') {
+        return None;
+    }
+    // `rest` is `#<rev>` or `?<query>#<rev>`; the rev itself never
+    // contains `#`, so the last fragment is always the revision.
+    match rest.rsplit('#').next() {
+        Some(rev) if !rev.is_empty() => Some(rev.to_string()),
+        _ => None,
+    }
 }
 
 /// Whether a vendored directory is currently active in dependency resolution.
@@ -619,6 +633,39 @@ pub const fn vendored_patches() -> &'static [VendoredPatch] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lock_source_rev_accepts_plain_and_branch_sources() {
+        assert_eq!(
+            lock_source_rev(
+                r#"source = "git+https://github.com/pierreaubert/sotf-3rdparties#972d8b28adfdd12ed31307a49c58be2a650c2233""#
+            )
+            .as_deref(),
+            Some("972d8b28adfdd12ed31307a49c58be2a650c2233")
+        );
+        assert_eq!(
+            lock_source_rev(
+                r#"source = "git+https://github.com/pierreaubert/sotf-3rdparties?branch=foreign-parent-win-linux#d7b22228899e7f6504e6c28f4e7c316b8bfdc420""#
+            )
+            .as_deref(),
+            Some("d7b22228899e7f6504e6c28f4e7c316b8bfdc420")
+        );
+    }
+
+    #[test]
+    fn lock_source_rev_rejects_other_repositories() {
+        assert_eq!(
+            lock_source_rev(r#"source = "registry+https://github.com/rust-lang/crates.io-index""#),
+            None
+        );
+        assert_eq!(
+            lock_source_rev(
+                r#"source = "git+https://github.com/pierreaubert/sotf-3rdparties-fork#972d8b28adfdd12ed31307a49c58be2a650c2233""#
+            ),
+            None
+        );
+        assert_eq!(lock_source_rev(r#"name = "gpui""#), None);
+    }
 
     #[test]
     fn sotf_third_parties_dir_resolves_the_locked_checkout() {
