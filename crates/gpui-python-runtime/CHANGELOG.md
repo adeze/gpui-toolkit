@@ -2,6 +2,14 @@
 
 ## Features
 
+- Python stays in sync with the Rust data-model and I/O wave:
+  `gpui_toolkit.mesh.read_mesh` / `write_mesh` exchange VTU (raw or
+  zlib-compressed), OBJ, PLY, and STL files, and `read_pvd` loads a PVD
+  time series with parallel parts merged (backed by the new native
+  `mesh_read` / `mesh_write` / `mesh_read_pvd` bridge functions).
+
+## Features
+
 - `gpui_toolkit.mesh` stays in sync with the new Rust filters: the
   `run`/`geometry` op chains accept `point_to_cell`, `cell_to_point`,
   `normals`, `feature_edges`, `decimate`, `smooth`, `clip_sphere`,

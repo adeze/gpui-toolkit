@@ -4,6 +4,16 @@
 
 ### Added
 
+- Mesh data-model and I/O wave: rectilinear/curvilinear grids, polygon
+  cells, composite (multiblock/AMR) datasets, time-series sampling, VTU
+  appended and zlib-compressed I/O, STL/OBJ/PLY surface files, and PVD
+  collections — with the Python wrapper kept in sync
+  (`mesh.read_mesh` / `write_mesh` / `read_pvd`). Delaunay delegates to
+  the `delaunator` kernel Sonium's mesher builds on; mesh generation
+  stays in Sonium.
+
+### Added
+
 - Three crates for VTK-class 2D/3D mesh visualization, all at the aligned
   0.10.44 version: `gpui-mesh` (dataset model: VTK-style cells, named
   point/cell fields, scalar/vector/tensor/complex fields, bounded surface

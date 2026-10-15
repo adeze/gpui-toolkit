@@ -11,8 +11,12 @@ ops with :func:`run`. Every op mirrors one Rust filter: ``slice``,
 :func:`geometry`, which returns points, cells and fields;
 :func:`particles` advects seeds through time snapshots, and
 :func:`streamlines` integrates seeded RK2 streamlines in both
-directions. Without a built wheel, :func:`problem` reports that the
-native extension is missing and the run helpers raise ``RuntimeError``.
+directions. File exchange mirrors the Rust I/O family:
+:func:`read_mesh` / :func:`write_mesh` handle VTU (optionally
+zlib-compressed), OBJ, PLY and STL files, and :func:`read_pvd` loads a
+PVD time series with parallel parts merged. Without a built wheel,
+:func:`problem` reports that the native extension is missing and the
+run helpers raise ``RuntimeError``.
 """
 
 from __future__ import annotations
@@ -26,25 +30,34 @@ try:
         mesh_ftle as _mesh_ftle,
         mesh_geometry as _mesh_geometry,
         mesh_particles as _mesh_particles,
+        mesh_read as _mesh_read,
+        mesh_read_pvd as _mesh_read_pvd,
         mesh_statistics as _mesh_statistics,
         mesh_problem as _mesh_problem,
         mesh_streamlines as _mesh_streamlines,
+        mesh_write as _mesh_write,
     )
 except ImportError:  # Source tree without a built wheel.
     _mesh_filters = None  # type: ignore[assignment]
     _mesh_ftle = None  # type: ignore[assignment]
     _mesh_geometry = None  # type: ignore[assignment]
     _mesh_particles = None  # type: ignore[assignment]
+    _mesh_read = None  # type: ignore[assignment]
+    _mesh_read_pvd = None  # type: ignore[assignment]
     _mesh_statistics = None  # type: ignore[assignment]
     _mesh_problem = None  # type: ignore[assignment]
     _mesh_streamlines = None  # type: ignore[assignment]
+    _mesh_write = None  # type: ignore[assignment]
 
 
 def _native(name: str):
     fn = {"mesh_filters": _mesh_filters, "mesh_ftle": _mesh_ftle,
           "mesh_geometry": _mesh_geometry, "mesh_particles": _mesh_particles,
-          "mesh_problem": _mesh_problem, "mesh_statistics": _mesh_statistics,
-          "mesh_streamlines": _mesh_streamlines}[name]
+          "mesh_problem": _mesh_problem, "mesh_read": _mesh_read,
+          "mesh_read_pvd": _mesh_read_pvd,
+          "mesh_statistics": _mesh_statistics,
+          "mesh_streamlines": _mesh_streamlines,
+          "mesh_write": _mesh_write}[name]
     if fn is None:
         raise RuntimeError("gpui_toolkit native extension is not installed")
     return fn
@@ -243,8 +256,75 @@ def streamlines(
     return json.loads(_native("mesh_streamlines")(request))["lines"]
 
 
+_FORMAT_BY_SUFFIX = {".vtu": "vtu", ".obj": "obj", ".ply": "ply",
+                     ".stl": "stl"}
+
+
+def _format_for(path: str) -> str:
+    import os
+    suffix = os.path.splitext(path)[1].lower()
+    if suffix not in _FORMAT_BY_SUFFIX:
+        raise ValueError(
+            f"unsupported mesh file suffix '{suffix}' "
+            f"(expected one of {sorted(_FORMAT_BY_SUFFIX)})")
+    return _FORMAT_BY_SUFFIX[suffix]
+
+
+def read_mesh(path: str) -> dict[str, Any]:
+    """Read a mesh file (.vtu/.obj/.ply/.stl); returns geometry JSON.
+
+    The result has the same shape as :func:`geometry`: points, typed
+    cells, triangle/line index lists, and fields.
+    """
+    import base64
+    with open(path, "rb") as handle:
+        data = base64.b64encode(handle.read()).decode("ascii")
+    request = json.dumps({"format": _format_for(path), "data_b64": data})
+    return json.loads(_native("mesh_read")(request))
+
+
+def write_mesh(dataset: dict[str, Any], path: str, *,
+               compress: bool = False) -> None:
+    """Write a dataset spec to `path` (.vtu/.obj/.ply/.stl).
+
+    ``compress=True`` selects the zlib-compressed VTU variant and only
+    applies to ``.vtu`` paths.
+    """
+    import base64
+    fmt = _format_for(path)
+    if compress:
+        if fmt != "vtu":
+            raise ValueError("compress=True only applies to .vtu files")
+        fmt = "vtu-zlib"
+    request = json.dumps({"dataset": dataset, "format": fmt})
+    reply = json.loads(_native("mesh_write")(request))
+    with open(path, "wb") as handle:
+        handle.write(base64.b64decode(reply["data_b64"]))
+
+
+def read_pvd(path: str) -> dict[str, Any]:
+    """Read a PVD collection next to `path`; returns times + step geometry.
+
+    Parallel parts of one timestep are merged; steps share the series
+    topology, matching the native ``TimeSeries`` contract.
+    """
+    import base64
+    import os
+    import re
+    with open(path, encoding="utf-8") as handle:
+        xml = handle.read()
+    base = os.path.dirname(os.path.abspath(path))
+    files: dict[str, str] = {}
+    for name in re.findall(r'file="([^"]+)"', xml):
+        with open(os.path.join(base, name), "rb") as handle:
+            files[name] = base64.b64encode(handle.read()).decode("ascii")
+    request = json.dumps({"pvd": xml, "files": files})
+    return json.loads(_native("mesh_read_pvd")(request))
+
+
 __all__ = [
     "arrows", "clip", "contours", "dashes", "ftle", "geometry", "lic",
-    "particles", "problem", "ribbons", "run", "slice_", "statistics",
-    "streamline_op", "streamlines", "structured", "tensor_glyphs", "tubes",
+    "particles", "problem", "read_mesh", "read_pvd", "ribbons", "run",
+    "slice_", "statistics", "streamline_op", "streamlines", "structured",
+    "tensor_glyphs", "tubes", "write_mesh",
 ]

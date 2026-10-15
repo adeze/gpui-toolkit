@@ -21,6 +21,7 @@ fn vtk_code(kind: CellType) -> u32 {
         CellType::Hexahedron => 12,
         CellType::Wedge => 13,
         CellType::Pyramid => 14,
+        CellType::Polygon => 7,
     }
 }
 
@@ -34,6 +35,7 @@ fn from_vtk_code(code: u32) -> Option<CellType> {
         12 => CellType::Hexahedron,
         13 => CellType::Wedge,
         14 => CellType::Pyramid,
+        7 => CellType::Polygon,
         _ => return None,
     })
 }

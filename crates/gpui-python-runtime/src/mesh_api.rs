@@ -433,6 +433,7 @@ fn dataset_geometry(dataset: &DataSet) -> Value {
             gpui_mesh::CellType::Hexahedron => "hexahedron",
             gpui_mesh::CellType::Wedge => "wedge",
             gpui_mesh::CellType::Pyramid => "pyramid",
+            gpui_mesh::CellType::Polygon => "polygon",
         };
         cells.push(json!({ "type": name, "nodes": nodes }));
         match kind {
@@ -629,6 +630,104 @@ fn f64_field(op: &Value, key: &str) -> Result<f64, String> {
         .ok_or_else(|| format!("op is missing numeric '{key}'"))
 }
 
+/// Reads a mesh file sent as base64 and returns its full geometry JSON
+/// (the same shape as [`mesh_geometry`]).
+///
+/// The request is `{"format": "vtu"|"stl"|"obj"|"ply",
+/// "data_b64": "..."}`. XDMF is a multi-file bundle and stays
+/// Rust-side.
+///
+/// # Errors
+///
+/// Returns a message for malformed JSON, bad base64, an unknown format,
+/// or unparseable file contents.
+pub fn mesh_read(request_json: &str) -> Result<String, String> {
+    let request: Value = serde_json::from_str(request_json).map_err(|e| e.to_string())?;
+    let format = request
+        .get("format")
+        .and_then(Value::as_str)
+        .ok_or("request is missing 'format'")?;
+    let encoded = request
+        .get("data_b64")
+        .and_then(Value::as_str)
+        .ok_or("request is missing 'data_b64'")?;
+    let bytes = gpui_dataset_transformation::decode_base64(encoded)?;
+    let dataset = read_dataset_bytes(&bytes, format)?;
+    Ok(serde_json::to_string(&dataset_geometry(&dataset)).unwrap_or_default())
+}
+
+/// Serialises the request's dataset spec in `format` and returns
+/// `{"data_b64": "..."}` with the file bytes.
+///
+/// Formats: "vtu", "vtu-zlib", "obj", "ply", "stl".
+///
+/// # Errors
+///
+/// Returns a message for malformed JSON, an invalid spec, an unknown
+/// format, or a serialisation failure.
+pub fn mesh_write(request_json: &str) -> Result<String, String> {
+    let request: Value = serde_json::from_str(request_json).map_err(|e| e.to_string())?;
+    let format = request
+        .get("format")
+        .and_then(Value::as_str)
+        .ok_or("request is missing 'format'")?;
+    let dataset = dataset_from_spec(request.get("dataset").unwrap_or(&Value::Null))?;
+    let bytes: Vec<u8> = match format {
+        "vtu" => gpui_dataset_transformation::write_vtu(&dataset).into_bytes(),
+        "vtu-zlib" => gpui_dataset_transformation::write_vtu_compressed(&dataset).into_bytes(),
+        "obj" => gpui_dataset_transformation::write_obj(&dataset).into_bytes(),
+        "ply" => gpui_dataset_transformation::write_ply(&dataset).into_bytes(),
+        "stl" => gpui_dataset_transformation::write_stl(&dataset)?,
+        other => return Err(format!("unsupported mesh format '{other}'")),
+    };
+    Ok(serde_json::to_string(
+        &json!({ "data_b64": gpui_dataset_transformation::encode_base64(&bytes) }),
+    )
+    .unwrap_or_default())
+}
+
+/// Loads a PVD collection: `{"pvd": "<xml>", "files": {"name": "<b64>"}}`
+/// and returns `{"times": [...], "steps": [geometry, ...]}` with parallel
+/// parts merged per timestep.
+///
+/// # Errors
+///
+/// Returns a message for malformed JSON, unresolvable files, or parse
+/// failures.
+pub fn mesh_read_pvd(request_json: &str) -> Result<String, String> {
+    let request: Value = serde_json::from_str(request_json).map_err(|e| e.to_string())?;
+    let xml = request
+        .get("pvd")
+        .and_then(Value::as_str)
+        .ok_or("request is missing 'pvd'")?;
+    let files = request.get("files").cloned().unwrap_or(Value::Null);
+    let series = gpui_dataset_transformation::read_pvd(xml, |name| {
+        files
+            .get(name)
+            .and_then(Value::as_str)
+            .and_then(|encoded| gpui_dataset_transformation::decode_base64(encoded).ok())
+    })?;
+    let steps: Vec<Value> = series.steps.iter().map(dataset_geometry).collect();
+    Ok(
+        serde_json::to_string(&json!({ "times": series.times, "steps": steps }))
+            .unwrap_or_default(),
+    )
+}
+
+fn read_dataset_bytes(bytes: &[u8], format: &str) -> Result<DataSet, String> {
+    match format {
+        "vtu" => gpui_dataset_transformation::read_vtu_bytes(bytes),
+        "stl" => gpui_dataset_transformation::read_stl(bytes),
+        "obj" => gpui_dataset_transformation::read_obj(
+            std::str::from_utf8(bytes).map_err(|_| "OBJ document is not UTF-8".to_string())?,
+        ),
+        "ply" => gpui_dataset_transformation::read_ply(
+            std::str::from_utf8(bytes).map_err(|_| "PLY document is not UTF-8".to_string())?,
+        ),
+        other => Err(format!("unsupported mesh format '{other}'")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -745,6 +844,43 @@ mod tests {
         let last = &frames["frames"][2];
         assert!(last["fields"]["age"].is_object());
         assert!(!last["lines"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn mesh_io_round_trips_obj_and_pvd() {
+        // Write a structured spec as OBJ through the bridge, read it back.
+        let spec = json!({
+            "id": "g",
+            "structured": {"dims": [2, 2, 2], "origin": [0.0, 0.0, 0.0], "spacing": [1.0, 1.0, 1.0]},
+            "fields": []
+        });
+        let written = mesh_write(&json!({"dataset": spec, "format": "obj"}).to_string()).unwrap();
+        let data_b64 = serde_json::from_str::<Value>(&written).unwrap()["data_b64"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let back = mesh_read(&json!({"format": "obj", "data_b64": data_b64}).to_string()).unwrap();
+        let geometry: Value = serde_json::from_str(&back).unwrap();
+        assert_eq!(geometry["points"].as_array().unwrap().len(), 8);
+
+        // Unknown formats are hard errors on both paths.
+        assert!(mesh_read(&json!({"format": "nope", "data_b64": ""}).to_string()).is_err());
+        assert!(mesh_write(&json!({"dataset": spec, "format": "nope"}).to_string()).is_err());
+
+        // PVD: one VTU part, one step.
+        let vtu_b64 = serde_json::from_str::<Value>(
+            &mesh_write(&json!({"dataset": spec, "format": "vtu"}).to_string()).unwrap(),
+        )
+        .unwrap()["data_b64"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let pvd = "<VTKFile type=\"Collection\"><Collection>                   <DataSet timestep=\"2.5\" part=\"0\" file=\"a.vtu\"/>                   </Collection></VTKFile>";
+        let series =
+            mesh_read_pvd(&json!({"pvd": pvd, "files": {"a.vtu": vtu_b64}}).to_string()).unwrap();
+        let series: Value = serde_json::from_str(&series).unwrap();
+        assert_eq!(series["times"], json!([2.5]));
+        assert_eq!(series["steps"].as_array().unwrap().len(), 1);
     }
 
     #[test]

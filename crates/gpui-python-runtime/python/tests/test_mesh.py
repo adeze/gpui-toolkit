@@ -85,6 +85,41 @@ class MeshTests(unittest.TestCase):
         self.assertIn("age", frames[2]["fields"])
         self.assertGreater(len(frames[2]["lines"]), 0)
 
+    def test_mesh_file_round_trip_and_pvd(self):
+        import os
+        import tempfile
+
+        dataset = _rotation_dataset()
+        with tempfile.TemporaryDirectory() as tmp:
+            obj = os.path.join(tmp, "grid.obj")
+            mesh.write_mesh(dataset, obj)
+            back = mesh.read_mesh(obj)
+            self.assertEqual(len(back["points"]), 125)
+
+            vtu = os.path.join(tmp, "grid.vtu")
+            mesh.write_mesh(dataset, vtu, compress=True)
+            back = mesh.read_mesh(vtu)
+            self.assertEqual(len(back["points"]), 125)
+            self.assertIn("s", back["fields"])
+
+            pvd = os.path.join(tmp, "series.pvd")
+            with open(os.path.join(tmp, "step.vtu"), "wb") as handle:
+                with open(vtu, "rb") as source:
+                    handle.write(source.read())
+            with open(pvd, "w", encoding="utf-8") as handle:
+                handle.write(
+                    '<VTKFile type="Collection"><Collection>'
+                    '<DataSet timestep="1.25" part="0" file="step.vtu"/>'
+                    "</Collection></VTKFile>"
+                )
+            series = mesh.read_pvd(pvd)
+            self.assertEqual(series["times"], [1.25])
+            self.assertEqual(len(series["steps"]), 1)
+            self.assertEqual(len(series["steps"][0]["points"]), 125)
+
+            with self.assertRaises(ValueError):
+                mesh.write_mesh(dataset, os.path.join(tmp, "grid.bogus"))
+
     def test_errors_are_reported(self):
         with self.assertRaises(ValueError):
             mesh.run(_rotation_dataset(), [{"op": "explode"}])

@@ -11,11 +11,13 @@
 // Rust guideline compliant 2026-02-21
 
 mod chunk;
+mod composite;
 mod dataset;
 mod field;
 mod time_series;
 
 pub use chunk::{SurfaceChunk, boundary_triangles, surface_chunks};
+pub use composite::{Block, CompositeDataSet};
 pub use dataset::{Bounds, CellType, Cells, DataSet, DataSetKind, MeshError};
 pub use field::{Association, Field, FieldData};
 pub use time_series::TimeSeries;

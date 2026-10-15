@@ -77,6 +77,12 @@ pub fn boundary_triangles(dataset: &DataSet) -> Vec<[u32; 3]> {
                 triangles.push([nodes[0], nodes[1], nodes[2]]);
                 triangles.push([nodes[0], nodes[2], nodes[3]]);
             }
+            CellType::Polygon => {
+                // Fan triangulation around the first node.
+                for i in 1..nodes.len() - 1 {
+                    triangles.push([nodes[0], nodes[i], nodes[i + 1]]);
+                }
+            }
             CellType::Tetra | CellType::Hexahedron | CellType::Wedge | CellType::Pyramid => {
                 for face in volume_faces(kind) {
                     // Triangular faces are stored with a repeated last node.

@@ -24,6 +24,8 @@ pub enum CellType {
     Wedge,
     /// 5-node pyramid.
     Pyramid,
+    /// Variable-node polygon (3 or more nodes, planar surface cell).
+    Polygon,
 }
 
 impl CellType {
@@ -39,6 +41,8 @@ impl CellType {
             Self::Hexahedron => 8,
             Self::Wedge => 6,
             Self::Pyramid => 5,
+            // Variable: validated as >= 3 nodes instead of a fixed count.
+            Self::Polygon => 0,
         }
     }
 
@@ -54,7 +58,7 @@ impl CellType {
     /// Whether this is a surface (2D) cell.
     #[must_use]
     pub fn is_surface(self) -> bool {
-        matches!(self, Self::Triangle | Self::Quad)
+        matches!(self, Self::Triangle | Self::Quad | Self::Polygon)
     }
 }
 
@@ -175,6 +179,12 @@ pub enum DataSetKind {
 /// Validation failures for datasets and fields.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum MeshError {
+    /// Time-series steps are inconsistent with each other.
+    #[error("invalid time series: {reason}")]
+    InvalidTimeSeries {
+        /// What is inconsistent.
+        reason: String,
+    },
     /// Positions must not be empty.
     #[error("positions array is empty")]
     EmptyPositions,
@@ -282,6 +292,60 @@ impl DataSet {
             point_data: Vec::new(),
             cell_data: Vec::new(),
         }
+    }
+
+    /// Creates a rectilinear grid: per-axis coordinates, structured
+    /// hexahedral connectivity (x-fastest point order).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when any axis is empty.
+    pub fn rectilinear_grid(
+        id: impl Into<Arc<str>>,
+        xs: &[f64],
+        ys: &[f64],
+        zs: &[f64],
+    ) -> Result<Self, MeshError> {
+        let dims = [xs.len(), ys.len(), zs.len()];
+        if dims.contains(&0) {
+            return Err(MeshError::InvalidDims { dims });
+        }
+        let mut positions = Vec::with_capacity(dims[0] * dims[1] * dims[2]);
+        for &z in zs {
+            for &y in ys {
+                for &x in xs {
+                    positions.push([x, y, z]);
+                }
+            }
+        }
+        let cells = structured_cells(dims);
+        let refs: Vec<(CellType, &[u32])> = cells.iter().map(|(t, n)| (*t, n.as_slice())).collect();
+        Ok(Self::new(id, positions, Cells::from_cells(&refs)))
+    }
+
+    /// Creates a curvilinear structured grid from explicit points.
+    ///
+    /// `positions` must hold exactly `dims[0] * dims[1] * dims[2]` points
+    /// in x-fastest order; connectivity is the structured hexahedral
+    /// layout, positions arbitrary (warped grids, body-fitted meshes).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on empty dimensions or a point-count mismatch.
+    pub fn curvilinear_grid(
+        id: impl Into<Arc<str>>,
+        dims: [usize; 3],
+        positions: Vec<[f64; 3]>,
+    ) -> Result<Self, MeshError> {
+        if dims.contains(&0) {
+            return Err(MeshError::InvalidDims { dims });
+        }
+        if positions.len() != dims[0] * dims[1] * dims[2] {
+            return Err(MeshError::InvalidDims { dims });
+        }
+        let cells = structured_cells(dims);
+        let refs: Vec<(CellType, &[u32])> = cells.iter().map(|(t, n)| (*t, n.as_slice())).collect();
+        Ok(Self::new(id, positions, Cells::from_cells(&refs)))
     }
 
     /// Creates a triangle-surface dataset.
@@ -449,7 +513,12 @@ impl DataSet {
         }
         for (cell, ty) in self.cells.types.iter().enumerate() {
             let nodes = self.cells.cell(cell).unwrap_or(&[]);
-            if nodes.len() != ty.node_count() {
+            let bad_len = if *ty == CellType::Polygon {
+                nodes.len() < 3
+            } else {
+                nodes.len() != ty.node_count()
+            };
+            if bad_len {
                 return Err(MeshError::CellNodeCountMismatch {
                     cell,
                     nodes: nodes.len(),
@@ -591,4 +660,33 @@ mod tests {
             Err(MeshError::FieldLengthMismatch { .. })
         ));
     }
+}
+
+/// Structured hexahedral connectivity for `dims` (x-fastest points).
+fn structured_cells(dims: [usize; 3]) -> Vec<(CellType, [u32; 8])> {
+    let [nx, ny, nz] = dims;
+    let idx = |i: usize, j: usize, k: usize| (k * ny * nx + j * nx + i) as u32;
+    let mut cells = Vec::new();
+    if nx > 1 && ny > 1 && nz > 1 {
+        for k in 0..nz - 1 {
+            for j in 0..ny - 1 {
+                for i in 0..nx - 1 {
+                    cells.push((
+                        CellType::Hexahedron,
+                        [
+                            idx(i, j, k),
+                            idx(i + 1, j, k),
+                            idx(i + 1, j + 1, k),
+                            idx(i, j + 1, k),
+                            idx(i, j, k + 1),
+                            idx(i + 1, j, k + 1),
+                            idx(i + 1, j + 1, k + 1),
+                            idx(i, j + 1, k + 1),
+                        ],
+                    ));
+                }
+            }
+        }
+    }
+    cells
 }

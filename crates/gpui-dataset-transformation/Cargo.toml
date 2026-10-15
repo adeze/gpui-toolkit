@@ -26,6 +26,8 @@ gpu = ["dep:wgpu", "dep:bytemuck", "dep:pollster"]
 [dependencies]
 bytemuck = { workspace = true, optional = true }
 gpui-mesh = { workspace = true }
+flate2 = "1"
+delaunator = { workspace = true }
 pollster = { workspace = true, optional = true }
 thiserror = { workspace = true }
 wgpu = { workspace = true, optional = true }

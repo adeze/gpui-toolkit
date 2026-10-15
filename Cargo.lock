@@ -2657,6 +2657,8 @@ version = "0.10.44"
 dependencies = [
  "bytemuck",
  "criterion",
+ "delaunator",
+ "flate2",
  "gpui-mesh",
  "pollster",
  "sotf-wgpu",

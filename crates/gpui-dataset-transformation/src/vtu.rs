@@ -21,6 +21,7 @@ fn vtk_code(kind: CellType) -> u32 {
         CellType::Hexahedron => 12,
         CellType::Wedge => 13,
         CellType::Pyramid => 14,
+        CellType::Polygon => 7,
     }
 }
 
@@ -34,10 +35,47 @@ fn from_vtk_code(code: u32) -> Option<CellType> {
         12 => CellType::Hexahedron,
         13 => CellType::Wedge,
         14 => CellType::Pyramid,
+        7 => CellType::Polygon,
         _ => return None,
     })
 }
 
+/// VTK zlib block size for compressed arrays.
+const COMPRESS_BLOCK: usize = 32_768;
+
+/// Compresses `raw` in the VTK compressed-binary layout: a `UInt64` header
+/// `[num_blocks, block_size, last_block_size, compressed sizes...]`
+/// followed by one zlib stream per block.
+fn compress_block(raw: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+    let blocks: Vec<&[u8]> = raw.chunks(COMPRESS_BLOCK).collect();
+    let num_blocks = blocks.len().max(1);
+    let mut compressed: Vec<Vec<u8>> = Vec::with_capacity(num_blocks);
+    for block in &blocks {
+        let mut encoder =
+            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        let _ = encoder.write_all(block);
+        compressed.push(encoder.finish().unwrap_or_default());
+    }
+    if blocks.is_empty() {
+        compressed.push(Vec::new());
+    }
+    let last_size = blocks.last().map_or(0, |b| b.len());
+    let mut out = Vec::new();
+    for value in [num_blocks as u64, COMPRESS_BLOCK as u64, last_size as u64] {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+    for block in &compressed {
+        out.extend_from_slice(&(block.len() as u64).to_le_bytes());
+    }
+    for block in compressed {
+        out.extend_from_slice(&block);
+    }
+    out
+}
+
+/// Encodes `raw` as uncompressed inline binary: base64 of a `UInt64`
+/// byte-count header followed by the raw array bytes.
 fn binary_block(raw: &[u8]) -> String {
     let mut payload = Vec::with_capacity(8 + raw.len());
     payload.extend_from_slice(&(raw.len() as u64).to_le_bytes());
@@ -45,12 +83,68 @@ fn binary_block(raw: &[u8]) -> String {
     base64::encode(&payload)
 }
 
-fn f64_block(values: &[f64]) -> String {
+/// Reverses [`compress_block`]: parses the `UInt64` block header and
+/// inflates each zlib block in order.
+///
+/// # Errors
+///
+/// Returns a description when the header is truncated, a block size is
+/// inconsistent, or a zlib stream fails to inflate.
+fn decompress_block(payload: &[u8]) -> Result<Vec<u8>, String> {
+    use std::io::Read as _;
+    if payload.len() < 24 {
+        return Err("compressed DataArray shorter than its header".into());
+    }
+    let header = |index: usize| -> u64 {
+        let at = index * 8;
+        u64::from_le_bytes(payload[at..at + 8].try_into().unwrap_or([0; 8]))
+    };
+    let num_blocks = header(0) as usize;
+    let block_size = header(1) as usize;
+    let last_size = header(2) as usize;
+    let sizes_at = 24;
+    if payload.len() < sizes_at + num_blocks * 8 {
+        return Err("compressed DataArray header is truncated".into());
+    }
+    let mut out = Vec::with_capacity(num_blocks.saturating_sub(1) * block_size + last_size);
+    let mut cursor = sizes_at + num_blocks * 8;
+    for block in 0..num_blocks {
+        let size = header(3 + block) as usize;
+        let stream = payload
+            .get(cursor..cursor + size)
+            .ok_or("compressed DataArray block is truncated")?;
+        let mut decoder = flate2::read::ZlibDecoder::new(stream);
+        let mut decoded = Vec::new();
+        decoder
+            .read_to_end(&mut decoded)
+            .map_err(|e| format!("zlib decompression failed: {e}"))?;
+        out.extend_from_slice(&decoded);
+        cursor += size;
+    }
+    let expected = num_blocks.saturating_sub(1) * block_size + last_size;
+    if out.len() != expected {
+        return Err(format!(
+            "decompressed size {} does not match header ({expected})",
+            out.len()
+        ));
+    }
+    Ok(out)
+}
+
+fn encode_block(raw: &[u8], compress: bool) -> String {
+    if compress {
+        base64::encode(&compress_block(raw))
+    } else {
+        binary_block(raw)
+    }
+}
+
+fn f64_block_mode(values: &[f64], compress: bool) -> String {
     let mut raw = Vec::with_capacity(values.len() * 8);
     for v in values {
         raw.extend_from_slice(&v.to_le_bytes());
     }
-    binary_block(&raw)
+    encode_block(&raw, compress)
 }
 
 fn data_array(out: &mut String, ty: &str, name: Option<&str>, components: usize, encoded: &str) {
@@ -61,23 +155,47 @@ fn data_array(out: &mut String, ty: &str, name: Option<&str>, components: usize,
     );
 }
 
-fn write_field_arrays(out: &mut String, fields: &[Field]) {
+fn write_field_arrays(out: &mut String, fields: &[Field], compress: bool) {
     for field in fields {
         match &field.data {
             FieldData::Scalar(values) => {
-                data_array(out, "Float64", Some(&field.name), 1, &f64_block(values));
+                data_array(
+                    out,
+                    "Float64",
+                    Some(&field.name),
+                    1,
+                    &f64_block_mode(values, compress),
+                );
             }
             FieldData::Vector(values) => {
                 let flat: Vec<f64> = values.iter().flatten().copied().collect();
-                data_array(out, "Float64", Some(&field.name), 3, &f64_block(&flat));
+                data_array(
+                    out,
+                    "Float64",
+                    Some(&field.name),
+                    3,
+                    &f64_block_mode(&flat, compress),
+                );
             }
             FieldData::Tensor(values) => {
                 let flat: Vec<f64> = values.iter().flatten().copied().collect();
-                data_array(out, "Float64", Some(&field.name), 6, &f64_block(&flat));
+                data_array(
+                    out,
+                    "Float64",
+                    Some(&field.name),
+                    6,
+                    &f64_block_mode(&flat, compress),
+                );
             }
             FieldData::Complex(values) => {
                 let flat: Vec<f64> = values.iter().flatten().copied().collect();
-                data_array(out, "Float64", Some(&field.name), 2, &f64_block(&flat));
+                data_array(
+                    out,
+                    "Float64",
+                    Some(&field.name),
+                    2,
+                    &f64_block_mode(&flat, compress),
+                );
             }
         }
     }
@@ -86,17 +204,39 @@ fn write_field_arrays(out: &mut String, fields: &[Field]) {
 /// Serializes a dataset as VTU XML text with inline binary arrays.
 #[must_use]
 pub fn write_vtu(dataset: &DataSet) -> String {
+    write_vtu_inner(dataset, false)
+}
+
+/// Serializes a dataset as VTU with zlib-compressed binary arrays
+/// (`compressor="vtkZLibDataCompressor"`, the VTK compressed layout).
+#[must_use]
+pub fn write_vtu_compressed(dataset: &DataSet) -> String {
+    write_vtu_inner(dataset, true)
+}
+
+fn write_vtu_inner(dataset: &DataSet, compress: bool) -> String {
     let mut out = String::new();
+    let compressor = if compress {
+        " compressor=\"vtkZLibDataCompressor\""
+    } else {
+        ""
+    };
     let _ = write!(
         out,
-        "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" byte_order=\"LittleEndian\" header_type=\"UInt64\">\
+        "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" byte_order=\"LittleEndian\" header_type=\"UInt64\"{compressor}>\
          <UnstructuredGrid><Piece NumberOfPoints=\"{}\" NumberOfCells=\"{}\">",
         dataset.point_count(),
         dataset.cell_count()
     );
     out.push_str("<Points>");
     let points: Vec<f64> = dataset.positions.iter().flatten().copied().collect();
-    data_array(&mut out, "Float64", None, 3, &f64_block(&points));
+    data_array(
+        &mut out,
+        "Float64",
+        None,
+        3,
+        &f64_block_mode(&points, compress),
+    );
     out.push_str("</Points><Cells>");
     let mut conn_raw = Vec::with_capacity(dataset.cells.connectivity.len() * 4);
     for index in dataset.cells.connectivity.iter() {
@@ -107,7 +247,7 @@ pub fn write_vtu(dataset: &DataSet) -> String {
         "Int32",
         Some("connectivity"),
         1,
-        &binary_block(&conn_raw),
+        &encode_block(&conn_raw, compress),
     );
     let mut offsets_raw = Vec::with_capacity(dataset.cells.offsets.len() * 8);
     for offset in dataset.cells.offsets.iter().skip(1) {
@@ -118,7 +258,7 @@ pub fn write_vtu(dataset: &DataSet) -> String {
         "Int64",
         Some("offsets"),
         1,
-        &binary_block(&offsets_raw),
+        &encode_block(&offsets_raw, compress),
     );
     let types: Vec<u8> = dataset
         .cells
@@ -126,11 +266,17 @@ pub fn write_vtu(dataset: &DataSet) -> String {
         .iter()
         .map(|t| vtk_code(*t) as u8)
         .collect();
-    data_array(&mut out, "UInt8", Some("types"), 1, &binary_block(&types));
+    data_array(
+        &mut out,
+        "UInt8",
+        Some("types"),
+        1,
+        &encode_block(&types, compress),
+    );
     out.push_str("</Cells><PointData>");
-    write_field_arrays(&mut out, &dataset.point_data);
+    write_field_arrays(&mut out, &dataset.point_data, compress);
     out.push_str("</PointData><CellData>");
-    write_field_arrays(&mut out, &dataset.cell_data);
+    write_field_arrays(&mut out, &dataset.cell_data, compress);
     out.push_str("</CellData></Piece></UnstructuredGrid></VTKFile>");
     out
 }
@@ -142,6 +288,7 @@ struct RawArray {
     components: usize,
     format: String,
     body: String,
+    offset: Option<usize>,
 }
 
 fn parse_arrays(section: &str) -> Vec<RawArray> {
@@ -179,6 +326,7 @@ fn parse_arrays(section: &str) -> Vec<RawArray> {
                 .unwrap_or(1),
             format: attr("format").unwrap_or_else(|| "ascii".into()),
             body,
+            offset: attr("offset").and_then(|v| v.parse().ok()),
         });
         rest = &after[advance.min(after.len())..];
         if advance == 0 {
@@ -194,10 +342,17 @@ fn section<'a>(xml: &'a str, open: &str, close: &str) -> &'a str {
     &xml[start..end]
 }
 
-fn decode_array(array: &RawArray) -> Result<Vec<u8>, String> {
+fn decode_array(
+    array: &RawArray,
+    appended: Option<&[u8]>,
+    compressed: bool,
+) -> Result<Vec<u8>, String> {
     match array.format.as_str() {
         "binary" => {
             let payload = base64::decode(&array.body)?;
+            if compressed {
+                return decompress_block(&payload);
+            }
             if payload.len() < 8 {
                 return Err("binary DataArray shorter than its header".into());
             }
@@ -215,13 +370,57 @@ fn decode_array(array: &RawArray) -> Result<Vec<u8>, String> {
             }
             Ok(raw[..declared].to_vec())
         }
+        "appended" => {
+            let blob = appended.ok_or("appended DataArray without AppendedData section")?;
+            let offset = array
+                .offset
+                .ok_or("appended DataArray without offset attribute")?;
+            let data = blob.get(offset..).ok_or("appended offset out of range")?;
+            if compressed {
+                return decompress_block(data);
+            }
+            if data.len() < 8 {
+                return Err("appended DataArray shorter than its header".into());
+            }
+            let declared =
+                u64::from_le_bytes(data[..8].try_into().map_err(|_| "bad header".to_string())?)
+                    as usize;
+            let raw = &data[8..];
+            if raw.len() < declared {
+                return Err("appended DataArray truncated".into());
+            }
+            Ok(raw[..declared].to_vec())
+        }
         "ascii" => Err("ascii VTU arrays are not supported by this reader".into()),
         other => Err(format!("unsupported DataArray format '{other}'")),
     }
 }
 
-fn array_f64(array: &RawArray) -> Result<Vec<f64>, String> {
-    let raw = decode_array(array)?;
+/// Extracts the raw `AppendedData` blob from file bytes, when present.
+fn appended_blob(bytes: &[u8]) -> Option<&[u8]> {
+    let start_marker = b"<AppendedData";
+    let start = bytes
+        .windows(start_marker.len())
+        .position(|w| w == start_marker)?;
+    let tag_end = bytes[start..].iter().position(|&b| b == b'>')? + start;
+    let mut blob_start = tag_end + 1;
+    if bytes.get(blob_start) == Some(&b'_') {
+        blob_start += 1;
+    }
+    let end_marker = b"</AppendedData>";
+    let end = bytes[blob_start..]
+        .windows(end_marker.len())
+        .position(|w| w == end_marker)?
+        + blob_start;
+    Some(&bytes[blob_start..end])
+}
+
+fn array_f64(
+    array: &RawArray,
+    appended: Option<&[u8]>,
+    compressed: bool,
+) -> Result<Vec<f64>, String> {
+    let raw = decode_array(array, appended, compressed)?;
     match array.ty.as_str() {
         "Float64" | "Double" => Ok(raw
             .as_chunks::<8>()
@@ -239,8 +438,12 @@ fn array_f64(array: &RawArray) -> Result<Vec<f64>, String> {
     }
 }
 
-fn array_i64(array: &RawArray) -> Result<Vec<i64>, String> {
-    let raw = decode_array(array)?;
+fn array_i64(
+    array: &RawArray,
+    appended: Option<&[u8]>,
+    compressed: bool,
+) -> Result<Vec<i64>, String> {
+    let raw = decode_array(array, appended, compressed)?;
     match array.ty.as_str() {
         "Int64" => Ok(raw
             .as_chunks::<8>()
@@ -265,11 +468,16 @@ fn array_i64(array: &RawArray) -> Result<Vec<i64>, String> {
     }
 }
 
-fn field_from_array(array: &RawArray, association: Association) -> Result<Option<Field>, String> {
+fn field_from_array(
+    array: &RawArray,
+    appended: Option<&[u8]>,
+    compressed: bool,
+    association: Association,
+) -> Result<Option<Field>, String> {
     let Some(name) = &array.name else {
         return Ok(None);
     };
-    let values = array_f64(array)?;
+    let values = array_f64(array, appended, compressed)?;
     let mut field = match array.components {
         1 => Field::scalar(name.clone(), values),
         3 => {
@@ -338,16 +546,32 @@ fn field_from_array(array: &RawArray, association: Association) -> Result<Option
 ///
 /// Returns a description of the first structural problem encountered.
 pub fn read_vtu(xml: &str) -> Result<DataSet, String> {
+    read_vtu_impl(xml, appended_blob(xml.as_bytes()))
+}
+
+/// Reads a VTU file from raw bytes; required for `format="appended"`
+/// files whose `AppendedData` blob is arbitrary binary.
+///
+/// # Errors
+///
+/// Returns a description of the first structural problem encountered.
+pub fn read_vtu_bytes(bytes: &[u8]) -> Result<DataSet, String> {
+    let xml = String::from_utf8_lossy(bytes);
+    read_vtu_impl(&xml, appended_blob(bytes))
+}
+
+fn read_vtu_impl(xml: &str, appended: Option<&[u8]>) -> Result<DataSet, String> {
     if !xml.contains("UnstructuredGrid") {
         return Err("not a VTU unstructured-grid file".into());
     }
+    let compressed = xml.contains("vtkZLibDataCompressor");
     // Points.
     let points_section = section(xml, "<Points>", "</Points>");
     let point_arrays = parse_arrays(points_section);
     let point_array = point_arrays
         .first()
         .ok_or("VTU file has no Points DataArray")?;
-    let flat = array_f64(point_array)?;
+    let flat = array_f64(point_array, appended, compressed)?;
     if flat.len() % 3 != 0 {
         return Err("points array length is not a multiple of 3".into());
     }
@@ -367,15 +591,15 @@ pub fn read_vtu(xml: &str) -> Result<DataSet, String> {
             .find(|a| a.name.as_deref() == Some(name))
             .ok_or_else(|| format!("VTU Cells section lacks '{name}'"))
     };
-    let connectivity: Vec<u32> = array_i64(find("connectivity")?)?
+    let connectivity: Vec<u32> = array_i64(find("connectivity")?, appended, compressed)?
         .into_iter()
         .map(|v| v as u32)
         .collect();
     let mut offsets: Vec<u64> = vec![0];
-    for value in array_i64(find("offsets")?)? {
+    for value in array_i64(find("offsets")?, appended, compressed)? {
         offsets.push(value as u64);
     }
-    let types: Vec<CellType> = array_i64(find("types")?)?
+    let types: Vec<CellType> = array_i64(find("types")?, appended, compressed)?
         .into_iter()
         .map(|code| {
             from_vtk_code(code as u32).ok_or_else(|| format!("unsupported VTK cell type {code}"))
@@ -389,12 +613,12 @@ pub fn read_vtu(xml: &str) -> Result<DataSet, String> {
 
     let mut dataset = DataSet::new("vtu", positions, cells);
     for array in parse_arrays(section(xml, "<PointData>", "</PointData>")) {
-        if let Some(field) = field_from_array(&array, Association::Point)? {
+        if let Some(field) = field_from_array(&array, appended, compressed, Association::Point)? {
             dataset.point_data.push(field);
         }
     }
     for array in parse_arrays(section(xml, "<CellData>", "</CellData>")) {
-        if let Some(field) = field_from_array(&array, Association::Cell)? {
+        if let Some(field) = field_from_array(&array, appended, compressed, Association::Cell)? {
             dataset.cell_data.push(field);
         }
     }
@@ -452,5 +676,190 @@ mod tests {
     fn rejects_non_vtu_input() {
         let err = read_vtu("<html></html>").unwrap_err();
         assert!(err.contains("not a VTU"));
+    }
+}
+
+/// Raw bytes of one field array (Float64 payloads, VTK component order).
+fn field_raw_bytes(field: &Field) -> (usize, Vec<u8>) {
+    let flat: Vec<f64> = match &field.data {
+        FieldData::Scalar(values) => values.iter().copied().collect(),
+        FieldData::Vector(values) => values.iter().flatten().copied().collect(),
+        FieldData::Tensor(values) => values.iter().flatten().copied().collect(),
+        FieldData::Complex(values) => values.iter().flatten().copied().collect(),
+    };
+    let components = match &field.data {
+        FieldData::Scalar(_) => 1,
+        FieldData::Vector(_) => 3,
+        FieldData::Tensor(_) => 6,
+        FieldData::Complex(_) => 2,
+    };
+    let mut raw = Vec::with_capacity(flat.len() * 8);
+    for v in flat {
+        raw.extend_from_slice(&v.to_le_bytes());
+    }
+    (components, raw)
+}
+
+/// Serializes a dataset as VTU with `format="appended"` raw data.
+///
+/// Returns the complete file bytes: XML header, then an
+/// `<AppendedData encoding="raw">` section holding every array as a
+/// `UInt64` length header followed by its raw bytes. Read it back with
+/// [`read_vtu_bytes`].
+#[must_use]
+pub fn write_vtu_appended(dataset: &DataSet) -> Vec<u8> {
+    fn add_array(
+        blob: &mut Vec<u8>,
+        tags: &mut Vec<String>,
+        ty: &str,
+        name: Option<&str>,
+        components: usize,
+        raw: &[u8],
+    ) {
+        let offset = blob.len();
+        blob.extend_from_slice(&(raw.len() as u64).to_le_bytes());
+        blob.extend_from_slice(raw);
+        let name_attr = name.map_or(String::new(), |n| format!(" Name=\"{n}\""));
+        tags.push(format!(
+            "<DataArray type=\"{ty}\"{name_attr} NumberOfComponents=\"{components}\" format=\"appended\" offset=\"{offset}\"/>"
+        ));
+    }
+    let mut blob: Vec<u8> = Vec::new();
+    let mut array_tags: Vec<String> = Vec::new();
+    let points: Vec<f64> = dataset.positions.iter().flatten().copied().collect();
+    let mut points_raw = Vec::with_capacity(points.len() * 8);
+    for v in &points {
+        points_raw.extend_from_slice(&v.to_le_bytes());
+    }
+    add_array(&mut blob, &mut array_tags, "Float64", None, 3, &points_raw);
+    let points_tag = array_tags.pop().unwrap_or_default();
+
+    let mut conn_raw = Vec::with_capacity(dataset.cells.connectivity.len() * 4);
+    for index in dataset.cells.connectivity.iter() {
+        conn_raw.extend_from_slice(&index.to_le_bytes());
+    }
+    add_array(
+        &mut blob,
+        &mut array_tags,
+        "Int32",
+        Some("connectivity"),
+        1,
+        &conn_raw,
+    );
+    let mut offsets_raw = Vec::with_capacity(dataset.cells.offsets.len() * 8);
+    for offset in dataset.cells.offsets.iter().skip(1) {
+        offsets_raw.extend_from_slice(&offset.to_le_bytes());
+    }
+    add_array(
+        &mut blob,
+        &mut array_tags,
+        "Int64",
+        Some("offsets"),
+        1,
+        &offsets_raw,
+    );
+    let types: Vec<u8> = dataset
+        .cells
+        .types
+        .iter()
+        .map(|t| vtk_code(*t) as u8)
+        .collect();
+    add_array(
+        &mut blob,
+        &mut array_tags,
+        "UInt8",
+        Some("types"),
+        1,
+        &types,
+    );
+    let cell_tags: Vec<String> = std::mem::take(&mut array_tags);
+
+    let mut point_tags: Vec<String> = Vec::new();
+    for field in &dataset.point_data {
+        let (components, raw) = field_raw_bytes(field);
+        let offset = blob.len();
+        blob.extend_from_slice(&(raw.len() as u64).to_le_bytes());
+        blob.extend_from_slice(&raw);
+        point_tags.push(format!(
+            "<DataArray type=\"Float64\" Name=\"{}\" NumberOfComponents=\"{components}\" format=\"appended\" offset=\"{offset}\"/>",
+            field.name
+        ));
+    }
+    let mut cell_data_tags: Vec<String> = Vec::new();
+    for field in &dataset.cell_data {
+        let (components, raw) = field_raw_bytes(field);
+        let offset = blob.len();
+        blob.extend_from_slice(&(raw.len() as u64).to_le_bytes());
+        blob.extend_from_slice(&raw);
+        cell_data_tags.push(format!(
+            "<DataArray type=\"Float64\" Name=\"{}\" NumberOfComponents=\"{components}\" format=\"appended\" offset=\"{offset}\"/>",
+            field.name
+        ));
+    }
+
+    let mut out = String::new();
+    let _ = write!(
+        out,
+        "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" byte_order=\"LittleEndian\" header_type=\"UInt64\">\
+         <UnstructuredGrid><Piece NumberOfPoints=\"{}\" NumberOfCells=\"{}\">",
+        dataset.point_count(),
+        dataset.cell_count()
+    );
+    out.push_str("<Points>");
+    out.push_str(&points_tag);
+    out.push_str("</Points><Cells>");
+    for tag in &cell_tags {
+        out.push_str(tag);
+    }
+    out.push_str("</Cells><PointData>");
+    for tag in &point_tags {
+        out.push_str(tag);
+    }
+    out.push_str("</PointData><CellData>");
+    for tag in &cell_data_tags {
+        out.push_str(tag);
+    }
+    out.push_str("</CellData></Piece></UnstructuredGrid>");
+    let mut bytes = out.into_bytes();
+    bytes.extend_from_slice(b"<AppendedData encoding=\"raw\">_");
+    bytes.extend_from_slice(&blob);
+    bytes.extend_from_slice(b"</AppendedData></VTKFile>");
+    bytes
+}
+
+#[cfg(test)]
+mod appended_tests {
+    use super::*;
+
+    fn sample() -> DataSet {
+        DataSet::structured_grid("room", [3, 2, 2], [0.0; 3], [0.5; 3])
+            .unwrap()
+            .with_field(Field::scalar("pressure", vec![1.5; 12]))
+            .with_field(Field::vector("velocity", vec![[1.0, 2.0, 3.0]; 12]))
+            .with_field(Field::scalar("cell_id", vec![0.0, 1.0]).on_cells())
+    }
+
+    #[test]
+    fn compressed_and_appended_round_trip() {
+        let dataset = sample();
+        let back = read_vtu(&write_vtu_compressed(&dataset)).unwrap();
+        assert_eq!(back.positions, dataset.positions);
+        assert_eq!(
+            back.field(Association::Point, "pressure")
+                .unwrap()
+                .as_scalar()
+                .unwrap(),
+            &[1.5; 12]
+        );
+        let back = read_vtu_bytes(&write_vtu_appended(&dataset)).unwrap();
+        assert_eq!(back.positions, dataset.positions);
+        assert_eq!(back.cells.types, dataset.cells.types);
+        assert_eq!(
+            back.field(Association::Cell, "cell_id")
+                .unwrap()
+                .as_scalar()
+                .unwrap(),
+            &[0.0, 1.0]
+        );
     }
 }

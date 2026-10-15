@@ -1,10 +1,13 @@
 //! Point-set geometry: 2D Delaunay triangulation and 3D convex hull.
 //!
 //! Delaunay triangulates the XY projection (points are expected roughly
-//! in a z = const arrangement, like scanned surfaces) with the
-//! Bowyer-Watson algorithm. The convex hull is the classic incremental
-//! algorithm with horizon retriangulation; both emit triangle datasets
-//! over the input positions.
+//! in a z = const arrangement, like scanned surfaces) through the
+//! `delaunator` kernel — the same crate Sonium's mesher builds on. The
+//! convex hull is a small incremental filter with horizon
+//! retriangulation; both emit triangle datasets over the input
+//! positions. Meshing proper (tetrahedralization, refinement, quality,
+//! meshlang) belongs to Sonium's mesher and is deliberately not
+//! reimplemented here.
 
 // Rust guideline compliant 2026-02-21
 
@@ -12,6 +15,9 @@ use crate::TransformError;
 use gpui_mesh::{CellType, Cells, DataSet};
 
 /// Delaunay-triangulates points by their XY projection.
+///
+/// Delegates to the `delaunator` crate — the same kernel Sonium's
+/// mesher builds on — instead of an in-house Bowyer-Watson.
 ///
 /// # Errors
 ///
@@ -23,52 +29,14 @@ pub fn delaunay_2d(points: &[[f64; 3]]) -> Result<DataSet, TransformError> {
             "Delaunay needs at least 3 points".into(),
         ));
     }
-    // Supertriangle large enough to contain every point.
-    let (mut min, mut max) = ([f64::MAX; 2], [f64::MIN; 2]);
-    for p in points {
-        min[0] = min[0].min(p[0]);
-        min[1] = min[1].min(p[1]);
-        max[0] = max[0].max(p[0]);
-        max[1] = max[1].max(p[1]);
-    }
-    let span = ((max[0] - min[0]).max(max[1] - min[1])).max(1.0) * 20.0;
-    let centre = [f64::midpoint(min[0], max[0]), f64::midpoint(min[1], max[1])];
-    let mut xy: Vec<[f64; 2]> = points.iter().map(|p| [p[0], p[1]]).collect();
-    xy.push([centre[0] - span, centre[1] - span]);
-    xy.push([centre[0], centre[1] + span]);
-    xy.push([centre[0] + span, centre[1] - span]);
-    let n = points.len();
-    let mut triangles: Vec<[usize; 3]> = vec![[n, n + 1, n + 2]];
-    for (index, point) in xy.iter().enumerate().take(n) {
-        let mut bad: Vec<usize> = Vec::new();
-        for (ti, tri) in triangles.iter().enumerate() {
-            if in_circumcircle(xy[tri[0]], xy[tri[1]], xy[tri[2]], *point) {
-                bad.push(ti);
-            }
-        }
-        // Boundary edges of the bad region (used by exactly one bad tri).
-        let mut boundary: Vec<(usize, usize)> = Vec::new();
-        for &ti in &bad {
-            let tri = triangles[ti];
-            for e in 0..3 {
-                let edge = (tri[e], tri[(e + 1) % 3]);
-                let reversed = (edge.1, edge.0);
-                if let Some(pos) = boundary.iter().position(|b| *b == reversed) {
-                    boundary.remove(pos);
-                } else {
-                    boundary.push(edge);
-                }
-            }
-        }
-        let bad_triangles: Vec<[usize; 3]> = bad.iter().map(|&ti| triangles[ti]).collect();
-        triangles.retain(|tri| !bad_triangles.contains(tri));
-        for (a, b) in boundary {
-            triangles.push([a, b, index]);
-        }
-    }
-    let cells: Vec<(CellType, Vec<u32>)> = triangles
+    let xy: Vec<delaunator::Point> = points
         .iter()
-        .filter(|tri| tri.iter().all(|&v| v < n))
+        .map(|p| delaunator::Point { x: p[0], y: p[1] })
+        .collect();
+    let triangulation = delaunator::triangulate(&xy);
+    let cells: Vec<(CellType, Vec<u32>)> = triangulation
+        .triangles
+        .chunks_exact(3)
         .map(|tri| {
             (
                 CellType::Triangle,
@@ -87,17 +55,6 @@ pub fn delaunay_2d(points: &[[f64; 3]]) -> Result<DataSet, TransformError> {
         points.to_vec(),
         Cells::from_cells(&refs),
     ))
-}
-
-fn in_circumcircle(a: [f64; 2], b: [f64; 2], c: [f64; 2], p: [f64; 2]) -> bool {
-    // In-circle determinant (positive inside for CCW triangles).
-    let (ax, ay) = (a[0] - p[0], a[1] - p[1]);
-    let (bx, by) = (b[0] - p[0], b[1] - p[1]);
-    let (cx, cy) = (c[0] - p[0], c[1] - p[1]);
-    let det = (ax * ax + ay * ay) * (bx * cy - cx * by) - (bx * bx + by * by) * (ax * cy - cx * ay)
-        + (cx * cx + cy * cy) * (ax * by - bx * ay);
-    let orient = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
-    if orient > 0.0 { det > 0.0 } else { det < 0.0 }
 }
 
 /// Convex hull of a 3D point set (incremental, horizon retriangulation).
@@ -254,7 +211,7 @@ mod tests {
         let mut points = Vec::new();
         for j in 0..4 {
             for i in 0..4 {
-                points.push([i as f64, j as f64, 0.0]);
+                points.push([f64::from(i), f64::from(j), 0.0]);
             }
         }
         let out = delaunay_2d(&points).unwrap();

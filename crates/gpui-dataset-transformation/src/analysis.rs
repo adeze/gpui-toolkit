@@ -414,8 +414,8 @@ mod tests {
             .position(|p| *p == [1.0, 2.0, 0.0])
             .unwrap();
         assert!((values[index] - (43.0 - 3.0f64.sqrt())).abs() < 1e-12);
-        assert!(calculator(&grid(), "nope + 1", "q").is_err());
-        assert!(calculator(&grid(), "p +", "q").is_err());
+        calculator(&grid(), "nope + 1", "q").unwrap_err();
+        calculator(&grid(), "p +", "q").unwrap_err();
     }
 
     #[test]

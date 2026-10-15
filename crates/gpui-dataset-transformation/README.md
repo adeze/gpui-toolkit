@@ -30,8 +30,12 @@ targets with deterministic, order-preserving output; wasm stays
 sequential; the `gpu` feature runs the same diagnostics through wgpu compute
 (Metal on Apple Silicon, Vulkan/CUDA-class adapters elsewhere), with a
 prepared point-reduction kernel that is about 5x faster than the CPU at
-110k points in local benchmarks. I/O covers legacy VTK text, VTU XML with
-inline binary arrays, and XDMF with binary sidecars.
+110k points in local benchmarks. I/O covers legacy VTK text, VTU XML
+(inline binary, appended raw, and zlib-compressed arrays), XDMF with
+binary sidecars, PVD time-series collections, and STL/OBJ/PLY surface
+files. Mesh generation itself (tetrahedralization, refinement, meshlang)
+belongs to Sonium's mesher; Delaunay triangulation here delegates to the
+same `delaunator` kernel it builds on.
 
 No GPUI, wgpu, file-I/O, threading, or clock dependency: every filter runs
 identically on native targets and `wasm32-unknown-unknown` and is testable

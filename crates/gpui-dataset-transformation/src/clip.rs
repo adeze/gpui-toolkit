@@ -154,7 +154,7 @@ pub fn clip_halfspace(
             })
             .collect();
         match kind {
-            CellType::Triangle | CellType::Quad => {
+            CellType::Triangle | CellType::Quad | CellType::Polygon => {
                 emit_polygon(&mut builder, &clip_polygon(&pts, plane, keep_positive));
             }
             CellType::Tetra => {
@@ -260,7 +260,7 @@ pub fn slice(dataset: &DataSet, plane: &Plane) -> Result<DataSet, TransformError
             CellType::Tetra | CellType::Hexahedron | CellType::Wedge | CellType::Pyramid => {
                 slice_volume_cell(&mut builder, &pts, kind, plane);
             }
-            CellType::Triangle | CellType::Quad => {
+            CellType::Triangle | CellType::Quad | CellType::Polygon => {
                 let mut hits: Vec<V> = Vec::new();
                 for i in 0..pts.len() {
                     let a = &pts[i];

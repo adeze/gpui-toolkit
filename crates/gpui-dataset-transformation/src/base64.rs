@@ -5,7 +5,7 @@
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 /// Encodes bytes as standard base64 with padding.
-pub(crate) fn encode(data: &[u8]) -> String {
+pub fn encode(data: &[u8]) -> String {
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let b = [
@@ -35,7 +35,7 @@ pub(crate) fn encode(data: &[u8]) -> String {
 /// # Errors
 ///
 /// Returns a description on an invalid character or length.
-pub(crate) fn decode(text: &str) -> Result<Vec<u8>, String> {
+pub fn decode(text: &str) -> Result<Vec<u8>, String> {
     let mut table = [255u8; 256];
     for (i, c) in ALPHABET.iter().enumerate() {
         table[*c as usize] = i as u8;

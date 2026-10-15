@@ -27,6 +27,7 @@ fn xdmf_code(kind: CellType) -> u32 {
     match kind {
         CellType::Vertex => 1,
         CellType::Line => 2,
+        CellType::Polygon => 3,
         CellType::Triangle => 4,
         CellType::Quad => 5,
         CellType::Tetra => 6,
@@ -40,6 +41,7 @@ fn from_xdmf_code(code: u32) -> Option<CellType> {
     Some(match code {
         1 => CellType::Vertex,
         2 => CellType::Line,
+        3 => CellType::Polygon,
         4 => CellType::Triangle,
         5 => CellType::Quad,
         6 => CellType::Tetra,
@@ -89,6 +91,10 @@ pub fn write_xdmf(dataset: &DataSet) -> XdmfBundle {
     let mut stream: Vec<u32> = Vec::new();
     for cell in 0..dataset.cell_count() {
         stream.push(xdmf_code(dataset.cells.types[cell]));
+        if dataset.cells.types[cell] == CellType::Polygon {
+            // Mixed streams prefix polygons with their node count.
+            stream.push(dataset.cells.cell(cell).unwrap_or(&[]).len() as u32);
+        }
         if let Some(nodes) = dataset.cells.cell(cell) {
             stream.extend_from_slice(nodes);
         }
@@ -217,7 +223,16 @@ pub fn read_xdmf(xml: &str, resolve: impl Fn(&str) -> Option<Vec<u8>>) -> Result
         let kind = from_xdmf_code(stream[cursor])
             .ok_or_else(|| format!("unsupported XDMF topology code {}", stream[cursor]))?;
         cursor += 1;
-        let n = kind.node_count();
+        let n = if kind == CellType::Polygon {
+            if cursor >= stream.len() {
+                return Err("topology stream is truncated".into());
+            }
+            let count = stream[cursor] as usize;
+            cursor += 1;
+            count
+        } else {
+            kind.node_count()
+        };
         if cursor + n > stream.len() {
             return Err("topology stream is truncated".into());
         }

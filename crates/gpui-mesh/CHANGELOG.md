@@ -2,6 +2,14 @@
 
 ## Added
 
+- Data-model wave: `CellType::Polygon` with fan triangulation across
+  render, slice, and VTK/XDMF/VTU code paths; `DataSet::rectilinear_grid`
+  and `DataSet::curvilinear_grid` constructors; `CompositeDataSet`
+  (named multiblock blocks with AMR levels); and `TimeSeries::sample`
+  for time-interpolated snapshots.
+
+## Added
+
 - `Field::tensor` / `Field::complex` constructors and `as_tensor` /
   `as_complex` views, completing the tensor and complex field API.
 

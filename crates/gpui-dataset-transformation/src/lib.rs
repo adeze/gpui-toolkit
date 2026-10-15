@@ -7,11 +7,20 @@
 //! unit-tested headlessly. Filters never mutate their input; large inputs
 //! are processed cell by cell without materializing a second copy of the
 //! input geometry.
+//!
+//! Scope boundary with Sonium: this crate is a filter and file-format
+//! layer, not a mesher. Delaunay triangulation delegates to the
+//! `delaunator` kernel Sonium's mesher also builds on, and STL/OBJ/PLY
+//! support is format glue for exchanging surfaces. Mesh generation,
+//! tetrahedralization, refinement, quality repair, and meshlang live in
+//! `sonium-mesher` and are not reimplemented here.
 
 // Rust guideline compliant 2026-02-21
 
 mod analysis;
 mod base64;
+
+pub use base64::{decode as decode_base64, encode as encode_base64};
 mod calculator;
 mod clip;
 mod contours;
@@ -31,8 +40,10 @@ mod parallel;
 mod particles;
 mod plane;
 mod probe;
+mod pvd;
 mod streamline;
 mod surface;
+mod surface_io;
 mod tensor_trace;
 mod threshold;
 mod triangulate;
@@ -58,13 +69,15 @@ pub use lines::{dashed_lines, stream_ribbons, streamtubes};
 pub use particles::{ParticleOptions, StreakOptions, particle_frames, streak_frames};
 pub use plane::Plane;
 pub use probe::probe;
+pub use pvd::{PvdEntry, parse_pvd, pvd_part_bytes, read_pvd, write_pvd};
 pub use streamline::{streamlines, streamlines_adaptive};
 pub use surface::{feature_edges, surface_normals};
+pub use surface_io::{read_obj, read_ply, read_stl, write_obj, write_ply, write_stl};
 pub use tensor_trace::hyperstreamlines;
 pub use threshold::{ThresholdMode, threshold};
 pub use triangulate::{convex_hull, delaunay_2d};
 pub use vtk_io::{read_vtk, write_vtk};
-pub use vtu::{read_vtu, write_vtu};
+pub use vtu::{read_vtu, read_vtu_bytes, write_vtu, write_vtu_appended, write_vtu_compressed};
 pub use warp::{warp_by_scalar, warp_by_vector};
 pub use xdmf::{XdmfBundle, read_xdmf, write_xdmf};
 

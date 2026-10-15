@@ -2,6 +2,17 @@
 
 ## Added
 
+- Data-model and I/O wave: VTU appended raw binary and zlib-compressed
+  (`vtkZLibDataCompressor` layout) writers, a byte-oriented VTU reader,
+  STL/OBJ/PLY surface readers and writers, and PVD collection loading
+  (parallel parts merged per timestep). The base64 codec is now public
+  for bridge consumers.
+- Sonium scope boundary documented: Delaunay delegates to the
+  `delaunator` kernel Sonium's mesher builds on; no meshing algorithms
+  (tetrahedralization, refinement, meshlang) are implemented here.
+
+## Added
+
 - Missing-filter wave: point/cell data conversion, `surface_normals`,
   `feature_edges`, `decimate`, `smooth`, `clip_sphere`,
   `append_datasets`, `transform_dataset`, expression `calculator`,
