@@ -106,7 +106,7 @@ impl SpinoramaApp {
             .gap(px(ds.spacing.control_gap))
             .children(colormaps.iter().map(|&(cm, label)| {
                 div()
-                    .id(ElementId::Name(format!("cmap-{}", label).into()))
+                    .id(ElementId::Name(format!("cmap-{label}").into()))
                     .px(px(ds.spacing.control_padding_x))
                     .py(px(ds.spacing.control_padding_y * 0.5))
                     .rounded(px(ds.corners.sm))

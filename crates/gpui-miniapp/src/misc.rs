@@ -22,6 +22,9 @@ pub fn current_platform() -> Result<Rc<dyn gpui::Platform>, String> {
     Ok(platform)
 }
 
+// The Windows backend constructor can fail, so the `Result` is only
+// vacuous on the other targets.
+#[allow(clippy::unnecessary_wraps)]
 fn current_platform_backend() -> Result<Rc<dyn gpui::Platform>, String> {
     #[cfg(target_os = "macos")]
     {
@@ -182,7 +185,7 @@ pub fn web_mark_ready() {
 
 /// Bundled UI font data shared by every `MiniApp` shell.
 ///
-/// Returns the embedded IBM Plex Sans, Lilex, and DejaVu Sans files in the same
+/// Returns the embedded IBM Plex Sans, Lilex, and `DejaVu` Sans files in the same
 /// set the demo platform registers, so native harnesses can resolve the
 /// identical families instead of falling back to system fonts (which
 /// changes glyph widths, line wrapping, and therefore layout).

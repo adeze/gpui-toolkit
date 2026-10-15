@@ -1,10 +1,10 @@
-//! Bridge between gpui-ui-kit Theme and d3rs AxisTheme.
+//! Bridge between gpui-ui-kit Theme and d3rs `AxisTheme`.
 
 use d3rs::axis::AxisTheme;
 use gpui::Rgba;
 use gpui_ui_kit::theme::Theme;
 
-/// Wraps a gpui-ui-kit Theme to implement d3rs AxisTheme.
+/// Wraps a gpui-ui-kit Theme to implement d3rs `AxisTheme`.
 pub struct ChartTheme {
     pub line_color: Rgba,
     pub label_color: Rgba,

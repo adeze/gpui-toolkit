@@ -25,7 +25,7 @@ fn render_cea2034_plot(&mut self, cx: &mut Context<Self>) -> Div {
             let curve = self.cea2034_curves.get(name)?;
             let color = colors
                 .get(name)
-                .cloned()
+                .copied()
                 .unwrap_or(D3Color::rgb(128, 128, 128));
             let points: Vec<LinePoint> = curve
                 .freq
@@ -49,7 +49,7 @@ fn render_cea2034_plot(&mut self, cx: &mut Context<Self>) -> Div {
             let curve = self.cea2034_curves.get(name)?;
             let color = colors
                 .get(name)
-                .cloned()
+                .copied()
                 .unwrap_or(D3Color::rgb(128, 128, 128));
             let points: Vec<LinePoint> = curve
                 .freq

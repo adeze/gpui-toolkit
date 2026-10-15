@@ -98,8 +98,8 @@ impl SpinoramaApp {
                 let color = color_scale(color_t);
 
                 // Calculate radii (inner and outer)
-                let r_inner = (r_t * outer_radius as f64) as f32;
-                let r_outer = (r_t_next * outer_radius as f64) as f32;
+                let r_inner = (r_t * f64::from(outer_radius)) as f32;
+                let r_outer = (r_t_next * f64::from(outer_radius)) as f32;
 
                 // Calculate angles (convert to radians, 0° at top)
                 let theta1 = ((angle_t * 360.0 - 90.0).to_radians()) as f32;
@@ -122,12 +122,12 @@ impl SpinoramaApp {
             .filter(|&&f| f >= freq_min && f <= freq_max)
             .map(|&f| {
                 let t = (f.ln() - log_freq_min) / (log_freq_max - log_freq_min);
-                (t * outer_radius as f64) as f32
+                (t * f64::from(outer_radius)) as f32
             })
             .collect();
 
         let grid_angles: Vec<f32> = (0..12)
-            .map(|i| ((i as f64 * 30.0).to_radians()) as f32)
+            .map(|i| ((f64::from(i) * 30.0).to_radians()) as f32)
             .collect();
 
         // Clone data for canvas closure
@@ -223,7 +223,7 @@ impl SpinoramaApp {
                 .filter(|&&f| f >= freq_min && f <= freq_max)
                 .map(|&freq| {
                     let t = (freq.ln() - log_freq_min) / (log_freq_max - log_freq_min);
-                    let r = (t * outer_radius as f64) as f32;
+                    let r = (t * f64::from(outer_radius)) as f32;
                     let x = center_x;
                     let y = center_y - r - 8.0;
 
@@ -238,7 +238,7 @@ impl SpinoramaApp {
         // Angle labels
         let angle_font_config = GlyphTextConfig::horizontal((10.0 * s).round(), Hsla::from(theme.text_primary));
         let angle_labels = div().absolute().inset_0().children((0..12).map(|i| {
-            let angle_deg = i as f64 * 30.0;
+            let angle_deg = f64::from(i) * 30.0;
             let angle_rad = (angle_deg - 90.0).to_radians();
             let label_radius = outer_radius + 25.0;
             let x = center_x + label_radius * angle_rad.cos() as f32;
@@ -253,7 +253,7 @@ impl SpinoramaApp {
                 .left(px(x - 15.0))
                 .top(px(y - 6.0))
                 .child(render_glyph_text(
-                    &format!("{:.0}°", display_angle),
+                    &format!("{display_angle:.0}°"),
                     &angle_font_config,
                 ))
         }));
@@ -268,7 +268,7 @@ impl SpinoramaApp {
             .flex_col()
             .gap_1()
             .children((0..num_color_steps).map(|i| {
-                let t = i as f64 / num_color_steps as f64;
+                let t = f64::from(i) / f64::from(num_color_steps);
                 let color = color_scale(1.0 - t); // Invert so high values at top
                 let h = colorbar_height / num_color_steps as f32;
 
@@ -285,7 +285,7 @@ impl SpinoramaApp {
             .children([0.0, 0.5, 1.0].iter().map(|&t| {
                 let spl_val = spl_min + t * spl_range;
                 div().child(render_glyph_text(
-                    &format!("{:.0} dB", spl_val),
+                    &format!("{spl_val:.0} dB"),
                     &colorbar_label_font,
                 ))
             }));

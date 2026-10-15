@@ -36,8 +36,8 @@ impl SpinoramaApp {
         let angles: Vec<f64> = curves.iter().map(|c| c.angle).collect();
         let angle_count = angles.len();
 
-        let angle_min = angles.iter().cloned().fold(f64::INFINITY, f64::min);
-        let angle_max = angles.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let angle_min = angles.iter().copied().fold(f64::INFINITY, f64::min);
+        let angle_max = angles.iter().copied().fold(f64::NEG_INFINITY, f64::max);
 
         if freq_count == 0 || angle_count == 0 {
             return None;
@@ -48,7 +48,7 @@ impl SpinoramaApp {
         let mut spl_min = f64::INFINITY;
         let mut spl_max = f64::NEG_INFINITY;
 
-        for curve in curves.iter() {
+        for curve in curves {
             for &spl in curve.spl.iter().skip(freq_start_idx) {
                 grid_values.push(spl);
                 if spl < spl_min {
@@ -65,7 +65,7 @@ impl SpinoramaApp {
         let threshold_max = ((spl_max / 3.0).ceil() * 3.0) as i32;
         let thresholds: Vec<f64> = (threshold_min..=threshold_max)
             .step_by(3)
-            .map(|v| v as f64)
+            .map(f64::from)
             .collect();
 
         let log_freq_values: Vec<f64> = freq_points.iter().map(|f| f.ln()).collect();
@@ -81,27 +81,15 @@ impl SpinoramaApp {
         let is_surface = render_mode == ContourRenderMode::Surface;
         let is_heatmap = render_mode == ContourRenderMode::Heatmap;
         // Generate contours for Isoline mode
-        let contours = if is_isoline {
-            Some(generator.contours(&grid_values, &thresholds))
-        } else {
-            None
-        };
+        let contours = is_isoline.then(|| generator.contours(&grid_values, &thresholds));
         // Generate contour bands for Surface mode (filled polygons between levels)
-        let contour_bands = if is_surface {
-            Some(generator.contour_bands(&grid_values, &thresholds))
-        } else {
-            None
-        };
+        let contour_bands = is_surface.then(|| generator.contour_bands(&grid_values, &thresholds));
         // For heatmap mode, use HeatmapData (renders using quads without anti-aliasing gaps)
-        let heatmap_data = if is_heatmap {
-            Some(HeatmapData::new(
+        let heatmap_data = is_heatmap.then(|| HeatmapData::new(
                 log_freq_values.clone(),
                 angles.clone(),
                 grid_values.clone(),
-            ))
-        } else {
-            None
-        };
+            ));
 
         let chart_width = self.content_width;
         let chart_height = (chart_width * 0.625).min(self.content_height * 0.6);
@@ -111,11 +99,11 @@ impl SpinoramaApp {
 
         let freq_scale = LinearScale::new()
             .domain(log_freq_min, log_freq_max)
-            .range(0.0, chart_width as f64);
+            .range(0.0, f64::from(chart_width));
 
         let angle_scale = LinearScale::new()
             .domain(angle_min, angle_max)
-            .range(0.0, chart_height as f64);
+            .range(0.0, f64::from(chart_height));
 
         // Configure rendering based on mode
         let color_scale = colormap.color_scale();
@@ -166,7 +154,7 @@ impl SpinoramaApp {
                                     &angle_scale,
                                     &AxisConfig::left()
                                         .with_ticks(9)
-                                        .with_formatter(|v| format!("{:.0}°", v))
+                                        .with_formatter(|v| format!("{v:.0}°"))
                                         .with_title("Angle")
                                         .with_label_font_size(label_sz)
                                         .with_title_font_size(title_sz),
@@ -245,7 +233,7 @@ impl SpinoramaApp {
                                             if f >= 1000.0 {
                                                 format!("{:.0}k", f / 1000.0)
                                             } else {
-                                                format!("{:.0}", f)
+                                                format!("{f:.0}")
                                             }
                                         })
                                         .with_title("Frequency (Hz)")
@@ -270,11 +258,11 @@ impl SpinoramaApp {
                         .bg(theme.muted)
                         .rounded(px(ds.corners.md))
                         .child(render_glyph_text(
-                            &format!("{:.0} dB", spl_min),
+                            &format!("{spl_min:.0} dB"),
                             &font_config,
                         ))
                         .children((0..15).map(|i| {
-                            let t = i as f64 / 14.0;
+                            let t = f64::from(i) / 14.0;
                             let color = colormap.color_scale()(t);
                             let (r, g, b) = (
                                 (color.r * 255.0) as u32,
@@ -287,7 +275,7 @@ impl SpinoramaApp {
                                 .bg(rgb((r << 16) | (g << 8) | b))
                         }))
                         .child(render_glyph_text(
-                            &format!("{:.0} dB", spl_max),
+                            &format!("{spl_max:.0} dB"),
                             &font_config,
                         ))
                 }),

@@ -11,8 +11,14 @@ appimage-builder-*
 **/.gradle/
 build/
 crates/gpui-showcase/android/gradle/app/src/main/jniLibs/
+
+# python
+__pycache__
 *.egg-info
 dist/
+venv
+.venv
+uv.lock
 
 # generated data
 /data
@@ -29,8 +35,7 @@ dist/
 !/docs/demos/
 !/docs/demos/**
 /tmp
-# `uv run --with` creates a project lock while resolving gallery-only tools.
-uv.lock
+*.so
 
 # node
 /node_modules
@@ -43,9 +48,6 @@ uv.lock
 _site
 /README.html
 /README_files
-
-# python
-__pycache__
 
 # MCP and Agents
 /.chunkhound

@@ -67,7 +67,7 @@ impl SpinoramaApp {
                     .text_size(px(ds.typography.large_size * s))
                     .font_weight(FontWeight::BOLD)
                     .text_color(theme.text_primary)
-                    .child(format!("Horizontal Contour Plots - {}", speaker_name)),
+                    .child(format!("Horizontal Contour Plots - {speaker_name}")),
             )
             // SPL Horizontal Contour (new format, -180 to +180) with toggle
             .when_some(spl_contour, |el, contour_div| {

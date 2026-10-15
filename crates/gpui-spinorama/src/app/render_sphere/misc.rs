@@ -88,14 +88,14 @@ impl SpinoramaApp {
         }
     }
 
-    /// Interpolate SPL for a point (h_angle, v_angle) on the sphere.
+    /// Interpolate SPL for a point (`h_angle`, `v_angle`) on the sphere.
     ///
     /// We have:
-    /// - Horizontal plane data: SPL at various h_angles, v_angle=0
-    /// - Vertical plane data: SPL at various v_angles, h_angle=0
+    /// - Horizontal plane data: SPL at various `h_angles`, `v_angle=0`
+    /// - Vertical plane data: SPL at various `v_angles`, `h_angle=0`
     ///
     /// For a point (h, v), we use additive interpolation in dB:
-    /// SPL(h, v) = SPL_h(h) + SPL_v(v) - SPL(0, 0)
+    /// SPL(h, v) = `SPL_h(h)` + `SPL_v(v)` - SPL(0, 0)
     ///
     /// This assumes the directivity pattern is separable.
     pub(super) fn interpolate_sphere_spl(
@@ -172,10 +172,10 @@ impl SpinoramaApp {
         let h_angles: Vec<f64> = directivity.horizontal.iter().map(|c| c.angle).collect();
         let v_angles: Vec<f64> = directivity.vertical.iter().map(|c| c.angle).collect();
 
-        let h_min = h_angles.iter().cloned().fold(f64::INFINITY, f64::min);
-        let h_max = h_angles.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        let v_min = v_angles.iter().cloned().fold(f64::INFINITY, f64::min);
-        let v_max = v_angles.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let h_min = h_angles.iter().copied().fold(f64::INFINITY, f64::min);
+        let h_max = h_angles.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let v_min = v_angles.iter().copied().fold(f64::INFINITY, f64::min);
+        let v_max = v_angles.iter().copied().fold(f64::NEG_INFINITY, f64::max);
 
         // Generate sphere grid
         // Use the actual measured angle ranges, extended to full sphere with extrapolation
@@ -184,7 +184,7 @@ impl SpinoramaApp {
 
         let h_values: Vec<f64> = (0..h_steps).map(|i| -180.0 + (i as f64) * 5.0).collect();
 
-        let v_values: Vec<f64> = (0..v_steps).map(|i| -90.0 + (i as f64) * 5.0).collect();
+        let v_values: Vec<f64> = (0..v_steps).map(|i| -90.0 + f64::from(i) * 5.0).collect();
 
         // Build Z values grid: z_values[h_idx][v_idx]
         let mut z_values: Vec<Vec<f64>> = Vec::with_capacity(h_steps);
@@ -272,7 +272,7 @@ impl SpinoramaApp {
             .gap(px(ds.spacing.control_gap))
             .children(colormaps.iter().map(|&(cm, label)| {
                 div()
-                    .id(ElementId::Name(format!("cmap-{}", label).into()))
+                    .id(ElementId::Name(format!("cmap-{label}").into()))
                     .px(px(ds.spacing.control_padding_x))
                     .py(px(ds.spacing.control_padding_y * 0.5))
                     .rounded(px(ds.corners.sm))
@@ -368,7 +368,7 @@ impl SpinoramaApp {
             .show_value(false)
             .on_change(move |log_value, _window, cx| {
                 // Convert log value back to frequency
-                let target_freq = 10.0_f64.powf(log_value as f64);
+                let target_freq = 10.0_f64.powf(f64::from(log_value));
                 // Find nearest index in freq_values
                 let nearest_idx = freq_values_clone
                     .iter()
@@ -378,8 +378,7 @@ impl SpinoramaApp {
                         let db = (*b - target_freq).abs();
                         da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
                     })
-                    .map(|(i, _)| i)
-                    .unwrap_or(0);
+                    .map_or(0, |(i, _)| i);
 
                 entity_freq.update(cx, |this, cx| {
                     this.sphere_freq_idx = nearest_idx;
@@ -391,7 +390,7 @@ impl SpinoramaApp {
         let freq_display_text = if current_freq >= 1000.0 {
             format!("{:.1} kHz", current_freq / 1000.0)
         } else {
-            format!("{:.0} Hz", current_freq)
+            format!("{current_freq:.0} Hz")
         };
 
         // Frequency Overlay on the 3D view
@@ -410,8 +409,7 @@ impl SpinoramaApp {
 
         // Data range info
         let range_info = format!(
-            "H: [{:.0}°, {:.0}°]  V: [{:.0}°, {:.0}°]  {} freq points",
-            h_min, h_max, v_min, v_max, freq_count
+            "H: [{h_min:.0}°, {h_max:.0}°]  V: [{v_min:.0}°, {v_max:.0}°]  {freq_count} freq points"
         );
 
         // Interactive View — fills remaining space

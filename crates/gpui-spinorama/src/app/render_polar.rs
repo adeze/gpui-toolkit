@@ -74,7 +74,7 @@ impl SpinoramaApp {
             .map(|&t| t * outer_radius)
             .collect();
 
-        let grid_angles: Vec<f64> = (0..12).map(|i| (i as f64 * 30.0).to_radians()).collect();
+        let grid_angles: Vec<f64> = (0..12).map(|i| (f64::from(i) * 30.0).to_radians()).collect();
 
         // Clone data for the canvas closure
         let frequency_paths_clone = frequency_paths.clone();
@@ -185,14 +185,14 @@ impl SpinoramaApp {
                             div()
                                 .text_size(px(ds.typography.small_size * s))
                                 .text_color(theme.text_secondary)
-                                .child(format_frequency(*freq).to_string()),
+                                .child(format_frequency(*freq).clone()),
                         )
                 }));
 
         // Angle labels using render_glyph_text
         let font_config = GlyphTextConfig::horizontal((10.0 * s).round(), Hsla::from(theme.text_primary));
         let angle_labels = div().absolute().inset_0().children((0..12).map(|i| {
-            let angle_deg = i as f64 * 30.0;
+            let angle_deg = f64::from(i) * 30.0;
             let angle_rad = (angle_deg - 90.0).to_radians();
             let label_radius = outer_radius + 25.0;
             let x = center_x + label_radius * angle_rad.cos() as f32;
@@ -209,7 +209,7 @@ impl SpinoramaApp {
                 .left(px(x - 15.0))
                 .top(px(y - 6.0))
                 .child(render_glyph_text(
-                    &format!("{}°", display_angle),
+                    &format!("{display_angle}°"),
                     &font_config,
                 ))
         }));
@@ -241,7 +241,7 @@ impl SpinoramaApp {
         ];
 
         let freq_selector = div().flex().flex_row().flex_wrap()
-            .when(self.content_width < 500.0, |el| el.w_full())
+            .when(self.content_width < 500.0, gpui::Styled::w_full)
             .gap(px(ds.spacing.control_gap)).children(
             available_frequencies.iter().enumerate().map(|(i, &freq)| {
                 let is_selected = self.polar_selected_frequencies.contains(&freq);

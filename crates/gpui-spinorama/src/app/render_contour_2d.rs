@@ -23,36 +23,36 @@ impl SpinoramaApp {
         let angle_min = contour_data
             .angles
             .iter()
-            .cloned()
+            .copied()
             .fold(f64::INFINITY, f64::min);
         let angle_max = contour_data
             .angles
             .iter()
-            .cloned()
+            .copied()
             .fold(f64::NEG_INFINITY, f64::max);
 
         // Get frequency range from data
         let freq_min = contour_data
             .freq
             .iter()
-            .cloned()
+            .copied()
             .fold(f64::INFINITY, f64::min);
         let freq_max = contour_data
             .freq
             .iter()
-            .cloned()
+            .copied()
             .fold(f64::NEG_INFINITY, f64::max);
 
         // Calculate SPL range
         let spl_min = contour_data
             .spl
             .iter()
-            .cloned()
+            .copied()
             .fold(f64::INFINITY, f64::min);
         let spl_max = contour_data
             .spl
             .iter()
-            .cloned()
+            .copied()
             .fold(f64::NEG_INFINITY, f64::max);
 
         // Generate contour thresholds (every 3 dB based on actual data range)
@@ -60,7 +60,7 @@ impl SpinoramaApp {
         let threshold_max = ((spl_max / 3.0).ceil() * 3.0) as i32;
         let thresholds: Vec<f64> = (threshold_min..=threshold_max)
             .step_by(3)
-            .map(|v| v as f64)
+            .map(f64::from)
             .collect();
 
         // For the contour generator, we pass the log-transformed frequencies
@@ -141,11 +141,11 @@ impl SpinoramaApp {
         // Create scales with data-driven ranges
         let freq_scale = LinearScale::new()
             .domain(log_freq_min, log_freq_max)
-            .range(0.0, chart_width as f64);
+            .range(0.0, f64::from(chart_width));
 
         let angle_scale = LinearScale::new()
             .domain(angle_min, angle_max)
-            .range(0.0, chart_height as f64);
+            .range(0.0, f64::from(chart_height));
 
         // Configure rendering based on mode
         let color_scale = colormap.color_scale();
@@ -194,7 +194,7 @@ impl SpinoramaApp {
                                     &angle_scale,
                                     &AxisConfig::left()
                                         .with_ticks(13)
-                                        .with_formatter(|v| format!("{:.0}°", v))
+                                        .with_formatter(|v| format!("{v:.0}°"))
                                         .with_title("Angle")
                                         .with_label_font_size(label_sz)
                                         .with_title_font_size(title_sz),
@@ -273,7 +273,7 @@ impl SpinoramaApp {
                                             if f >= 1000.0 {
                                                 format!("{:.0}k", f / 1000.0)
                                             } else {
-                                                format!("{:.0}", f)
+                                                format!("{f:.0}")
                                             }
                                         })
                                         .with_title("Frequency (Hz)")
@@ -298,11 +298,11 @@ impl SpinoramaApp {
                         .bg(theme.muted)
                         .rounded(px(ds.corners.md))
                         .child(render_glyph_text(
-                            &format!("{:.0} dB", spl_min),
+                            &format!("{spl_min:.0} dB"),
                             &font_config,
                         ))
                         .children((0..15).map(|i| {
-                            let t = i as f64 / 14.0;
+                            let t = f64::from(i) / 14.0;
                             let color = colormap.color_scale()(t);
                             let (r, g, b) = (
                                 (color.r * 255.0) as u32,
@@ -315,7 +315,7 @@ impl SpinoramaApp {
                                 .bg(rgb((r << 16) | (g << 8) | b))
                         }))
                         .child(render_glyph_text(
-                            &format!("{:.0} dB", spl_max),
+                            &format!("{spl_max:.0} dB"),
                             &font_config,
                         ))
                 }),

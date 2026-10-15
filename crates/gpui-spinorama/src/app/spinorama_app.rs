@@ -222,9 +222,9 @@ impl SpinoramaApp {
 
         cx.spawn(async move |this: WeakEntity<Self>, cx| {
             let result: Result<Vec<String>, String> = runtime
-                .spawn(async { fetch_available_speakers().await.map_err(|e| e.to_string()) })
+                .spawn(async { fetch_available_speakers().await.map_err(|e| e.clone()) })
                 .await
-                .map_err(|e| e.to_string())
+                .map_err(|e| e.clone())
                 .and_then(|r| r);
 
             match result {
@@ -274,7 +274,7 @@ impl SpinoramaApp {
                     async move { crate::api::fetch_versions(&speaker).await }
                 })
                 .await
-                .map_err(|e| e.to_string())
+                .map_err(|e| e.clone())
                 .and_then(|r| r);
 
             match result {
@@ -330,13 +330,13 @@ impl SpinoramaApp {
                         let plot_data =
                             fetch_measurement_plot_data(&speaker, &version, &measurement)
                                 .await
-                                .map_err(|e| e.to_string())?;
+                                .map_err(|e| e.clone())?;
                         extract_cea2034_curves_original(&plot_data, &measurement)
-                            .map_err(|e| e.to_string())
+                            .map_err(|e| e.clone())
                     }
                 })
                 .await
-                .map_err(|e| e.to_string())
+                .map_err(|e| e.clone())
                 .and_then(|r| r);
 
             // Fetch directivity data
@@ -1003,7 +1003,7 @@ impl SpinoramaApp {
         // using the stored chart bounds
         fn to_chart_coords(
             pos: Point<Pixels>,
-            bounds: &Option<Bounds<Pixels>>,
+            bounds: Option<&Bounds<Pixels>>,
             left_margin: f32,
             chart_width: f32,
             chart_height: f32,
@@ -1047,8 +1047,13 @@ impl SpinoramaApp {
                     .on_mouse_down(MouseButton::Left, move |event, _window, cx| {
                         let pos = event.position;
                         let bounds = chart_bounds.borrow();
-                        let (chart_x, chart_y) =
-                            to_chart_coords(pos, &bounds, left_margin, chart_width, chart_height);
+                        let (chart_x, chart_y) = to_chart_coords(
+                            pos,
+                            bounds.as_ref(),
+                            left_margin,
+                            chart_width,
+                            chart_height,
+                        );
 
                         *drag_start_down.borrow_mut() = Some((chart_x, chart_y));
 
@@ -1063,7 +1068,7 @@ impl SpinoramaApp {
                             let bounds = chart_bounds_for_move.borrow();
                             let (chart_x, chart_y) = to_chart_coords(
                                 pos,
-                                &bounds,
+                                bounds.as_ref(),
                                 left_margin,
                                 chart_width,
                                 chart_height,
@@ -1098,7 +1103,7 @@ impl SpinoramaApp {
                                     ChartId::FreqSpl => this.freq_spl_zoom.reset(),
                                     ChartId::SplContour => this.spl_contour_zoom.reset(),
                                     ChartId::DirectivityContour => {
-                                        this.directivity_contour_zoom.reset()
+                                        this.directivity_contour_zoom.reset();
                                     }
                                 }
                                 cx.notify();
@@ -1131,20 +1136,20 @@ impl SpinoramaApp {
         // This matches screen coordinates where Y increases downward but domain values increase upward
         let y_scale = LinearScale::new()
             .domain(y_domain.0, y_domain.1)
-            .range(chart_height as f64, 0.0);
+            .range(f64::from(chart_height), 0.0);
 
         // Convert pixel coordinates to domain
         // The brush module now does direct inversion without Y-swap
         let (x0, x1, y0, y1) = if is_log_x {
             let x_scale = LogScale::new()
                 .domain(x_domain.0, x_domain.1)
-                .range(0.0, chart_width as f64);
+                .range(0.0, f64::from(chart_width));
             let domain_sel = sel.to_domain(&x_scale, &y_scale);
             (domain_sel.x0, domain_sel.x1, domain_sel.y0, domain_sel.y1)
         } else {
             let x_scale = LinearScale::new()
                 .domain(x_domain.0, x_domain.1)
-                .range(0.0, chart_width as f64);
+                .range(0.0, f64::from(chart_width));
             let domain_sel = sel.to_domain(&x_scale, &y_scale);
             (domain_sel.x0, domain_sel.x1, domain_sel.y0, domain_sel.y1)
         };
@@ -1181,17 +1186,17 @@ impl SpinoramaApp {
             let log_min = x_min.ln();
             let log_max = x_max.ln();
             let log_range = log_max - log_min;
-            let log_delta = -(dx as f64) * log_range / (chart_width as f64);
+            let log_delta = -f64::from(dx) * log_range / f64::from(chart_width);
             ((log_min + log_delta).exp(), (log_max + log_delta).exp())
         } else {
             let x_range = x_max - x_min;
-            let domain_dx = -(dx as f64) * x_range / (chart_width as f64);
+            let domain_dx = -f64::from(dx) * x_range / f64::from(chart_width);
             (x_min + domain_dx, x_max + domain_dx)
         };
 
         // Y is linear, and inverted (screen Y increases downward)
         let y_range = y_max - y_min;
-        let domain_dy = (dy as f64) * y_range / (chart_height as f64);
+        let domain_dy = f64::from(dy) * y_range / f64::from(chart_height);
         let new_y_min = y_min + domain_dy;
         let new_y_max = y_max + domain_dy;
 

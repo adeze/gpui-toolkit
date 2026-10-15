@@ -76,6 +76,9 @@ async fn get(url: &str) -> Result<Value, String> {
         .map_err(|e| e.to_string())
 }
 
+// The wasm branch reads the browser origin and can fail, so the
+// `Result` is only vacuous on native targets.
+#[allow(clippy::unnecessary_wraps)]
 fn api_url(path: &str) -> Result<String, String> {
     #[cfg(not(target_family = "wasm"))]
     let base = "https://api.spinorama.org/v1".to_string();
@@ -164,13 +167,23 @@ fn numbers(value: &Value) -> Result<Vec<f64>, String> {
             .chunks_exact(size)
             .map(|chunk| match dtype {
                 "f8" => f64::from_le_bytes(chunk.try_into().expect("eight-byte chunk")),
-                "f4" => f32::from_le_bytes(chunk.try_into().expect("four-byte chunk")) as f64,
-                "i4" => i32::from_le_bytes(chunk.try_into().expect("four-byte chunk")) as f64,
-                "u4" => u32::from_le_bytes(chunk.try_into().expect("four-byte chunk")) as f64,
-                "i2" => i16::from_le_bytes(chunk.try_into().expect("two-byte chunk")) as f64,
-                "u2" => u16::from_le_bytes(chunk.try_into().expect("two-byte chunk")) as f64,
-                "i1" => chunk[0] as i8 as f64,
-                "u1" => chunk[0] as f64,
+                "f4" => f64::from(f32::from_le_bytes(
+                    chunk.try_into().expect("four-byte chunk"),
+                )),
+                "i4" => f64::from(i32::from_le_bytes(
+                    chunk.try_into().expect("four-byte chunk"),
+                )),
+                "u4" => f64::from(u32::from_le_bytes(
+                    chunk.try_into().expect("four-byte chunk"),
+                )),
+                "i2" => f64::from(i16::from_le_bytes(
+                    chunk.try_into().expect("two-byte chunk"),
+                )),
+                "u2" => f64::from(u16::from_le_bytes(
+                    chunk.try_into().expect("two-byte chunk"),
+                )),
+                "i1" => f64::from(chunk[0] as i8),
+                "u1" => f64::from(chunk[0]),
                 _ => unreachable!("validated dtype"),
             })
             .collect()
@@ -385,12 +398,10 @@ mod tests {
 
     #[test]
     fn malformed_grids_and_truncated_typed_arrays_are_rejected() {
-        assert!(numbers(&json!({"dtype": "f8", "bdata": "AA=="})).is_err());
-        assert!(curve(&json!({"x": [100, 10], "y": [1, 2]})).is_err());
-        assert!(curve(&json!({"x": [100, 1000], "y": [1]})).is_err());
-        assert!(
-            contour(&json!({"data": [{"x": [100, 1000], "y": [-10, 10], "z": [[1, 2]]}]})).is_err()
-        );
+        numbers(&json!({"dtype": "f8", "bdata": "AA=="})).unwrap_err();
+        curve(&json!({"x": [100, 10], "y": [1, 2]})).unwrap_err();
+        curve(&json!({"x": [100, 1000], "y": [1]})).unwrap_err();
+        contour(&json!({"data": [{"x": [100, 1000], "y": [-10, 10], "z": [[1, 2]]}]})).unwrap_err();
     }
 
     #[test]

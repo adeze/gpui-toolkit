@@ -73,11 +73,11 @@ pub fn render_freq_spl_plot(
     // Create log frequency scale with zoom support
     let freq_scale = LogScale::new()
         .domain(freq_domain.0, freq_domain.1)
-        .range(0.0, chart_width as f64);
+        .range(0.0, f64::from(chart_width));
     // Create linear SPL scale for main curves
     let spl_scale = LinearScale::new()
         .domain(spl_domain.0, spl_domain.1)
-        .range(chart_height as f64, 0.0);
+        .range(f64::from(chart_height), 0.0);
 
     // All possible major frequency ticks
     let all_major_ticks = [
@@ -119,14 +119,14 @@ pub fn render_freq_spl_plot(
     let spl_ticks: Vec<f64> = {
         let start = (spl_domain.0 / spl_step).ceil() as i32;
         let end = (spl_domain.1 / spl_step).floor() as i32;
-        (start..=end).map(|i| i as f64 * spl_step).collect()
+        (start..=end).map(|i| f64::from(i) * spl_step).collect()
     };
 
     // Create secondary scale if needed
     let secondary_scale = secondary_axis.as_ref().map(|cfg| {
         LinearScale::new()
             .domain(cfg.domain.0, cfg.domain.1)
-            .range(chart_height as f64, 0.0)
+            .range(f64::from(chart_height), 0.0)
     });
 
     // Separate curves by axis
@@ -135,7 +135,7 @@ pub fn render_freq_spl_plot(
         curves.iter().filter(|c| c.use_secondary_axis).collect();
     let left_axis_config = AxisConfig::left()
         .with_tick_values(spl_ticks)
-        .with_formatter(|v| format!("{:.0}", v))
+        .with_formatter(|v| format!("{v:.0}"))
         .with_title("SPL (dB)")
         .with_label_font_size(label_size)
         .with_title_font_size(title_size)
@@ -230,13 +230,13 @@ pub fn render_freq_spl_plot(
                 .when_some(secondary_axis, |el, cfg| {
                     let sec_scale = LinearScale::new()
                         .domain(cfg.domain.0, cfg.domain.1)
-                        .range(chart_height as f64, 0.0);
+                        .range(f64::from(chart_height), 0.0);
                     // Note: with_formatter takes a fn pointer, so we can't capture max_label_value
                     // For DI axis, we use the tick values directly and filter with max_label_value
                     // by passing only tick values up to max_label_value that should have labels
                     let axis_config = AxisConfig::right()
                         .with_tick_values(cfg.tick_values)
-                        .with_formatter(|v| format!("{:.0}", v))
+                        .with_formatter(|v| format!("{v:.0}"))
                         .with_title(cfg.title)
                         .with_label_font_size(label_size)
                         .with_title_font_size(title_size)
@@ -259,7 +259,7 @@ pub fn render_freq_spl_plot(
                             if f >= 1000.0 {
                                 format!("{:.0}k", f / 1000.0)
                             } else {
-                                format!("{:.0}", f)
+                                format!("{f:.0}")
                             }
                         })
                         .with_title("Frequency (Hz)")

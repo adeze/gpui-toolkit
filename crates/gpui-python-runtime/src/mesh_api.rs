@@ -817,7 +817,10 @@ mod tests {
         let geometry: Value = serde_json::from_str(&out).unwrap();
         // Each solid arrow contributes 24 triangles (72 indices).
         let indices = geometry["triangles"].as_array().unwrap().len();
-        assert!(indices > 0 && indices % 72 == 0, "indices {indices}");
+        assert!(
+            indices > 0 && indices.is_multiple_of(72),
+            "indices {indices}"
+        );
         assert!(geometry["fields"]["magnitude"].is_object());
 
         let mut request: Value = serde_json::from_str(&rotation_request()).unwrap();
@@ -864,8 +867,8 @@ mod tests {
         assert_eq!(geometry["points"].as_array().unwrap().len(), 8);
 
         // Unknown formats are hard errors on both paths.
-        assert!(mesh_read(&json!({"format": "nope", "data_b64": ""}).to_string()).is_err());
-        assert!(mesh_write(&json!({"dataset": spec, "format": "nope"}).to_string()).is_err());
+        mesh_read(&json!({"format": "nope", "data_b64": ""}).to_string()).unwrap_err();
+        mesh_write(&json!({"dataset": spec, "format": "nope"}).to_string()).unwrap_err();
 
         // PVD: one VTU part, one step.
         let vtu_b64 = serde_json::from_str::<Value>(

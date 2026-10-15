@@ -26,7 +26,7 @@ impl SpinoramaApp {
                 let is_hidden = self.hidden_cea2034_curves.contains(name);
                 let color = colors
                     .get(name)
-                    .cloned()
+                    .copied()
                     .unwrap_or(D3Color::rgb(128, 128, 128));
                 let (r, g, b) = (
                     (color.r * 255.0) as u32,

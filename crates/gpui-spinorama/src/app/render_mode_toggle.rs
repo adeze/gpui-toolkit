@@ -27,7 +27,7 @@ impl SpinoramaApp {
                     .child(div().text_size(px(ds.typography.small_size * s)).text_color(theme.text_secondary).child("Render:"))
                     .child(
                         div()
-                            .id(ElementId::Name(format!("{}-btn", id).into()))
+                            .id(ElementId::Name(format!("{id}-btn").into()))
                             .flex()
                             .items_center()
                             .px(px(ds.spacing.control_padding_x))
@@ -58,7 +58,7 @@ impl SpinoramaApp {
                     .child(div().text_size(px(ds.typography.small_size * s)).text_color(theme.text_secondary).child("Colormap:"))
                     .child(
                         div()
-                            .id(ElementId::Name(format!("{}-colormap-btn", id).into()))
+                            .id(ElementId::Name(format!("{id}-colormap-btn").into()))
                             .flex()
                             .items_center()
                             .px(px(ds.spacing.control_padding_x))

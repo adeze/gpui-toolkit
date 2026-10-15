@@ -71,7 +71,7 @@ impl SpinoramaApp {
                 div()
                     .text_size(px(ds.typography.base_size * s))
                     .text_color(theme.text_secondary)
-                    .child(format!("No {} directivity data available.", plane)),
+                    .child(format!("No {plane} directivity data available.")),
             );
         }
 
@@ -117,8 +117,8 @@ impl SpinoramaApp {
             }
         }
         visible_curves.sort_by(|(a, _), (b, _)| {
-            let a_group = if *a < -0.05 { 1 } else { 0 };
-            let b_group = if *b < -0.05 { 1 } else { 0 };
+            let a_group = i32::from(*a < -0.05);
+            let b_group = i32::from(*b < -0.05);
             a_group
                 .cmp(&b_group)
                 .then_with(|| a.abs().partial_cmp(&b.abs()).unwrap_or(std::cmp::Ordering::Equal))

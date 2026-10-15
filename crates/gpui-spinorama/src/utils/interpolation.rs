@@ -51,7 +51,7 @@ fn interpolate_frequency_value(freq: &[f64], spl: &[f64], target_freq: f64) -> f
     let mut high = freq.len() - 1;
 
     while high - low > 1 {
-        let mid = (low + high) / 2;
+        let mid = usize::midpoint(low, high);
         if freq[mid] <= target_freq {
             low = mid;
         } else {
@@ -97,7 +97,7 @@ pub fn format_frequency(freq: f64) -> String {
         if khz == khz.floor() {
             format!("{}k", khz as i32)
         } else {
-            format!("{:.1}k", khz)
+            format!("{khz:.1}k")
         }
     } else {
         format!("{}", freq as i32)
@@ -122,7 +122,7 @@ mod tests {
         let spl = [80.0, 85.0, 75.0];
 
         // Midpoint in log space between 100 and 1000 is ~316 Hz
-        let mid_log = (100.0_f64.ln() + 1000.0_f64.ln()) / 2.0;
+        let mid_log = f64::midpoint(100.0_f64.ln(), 1000.0_f64.ln());
         let mid_freq = mid_log.exp();
 
         let result = interpolate_frequency_value(&freq, &spl, mid_freq);
