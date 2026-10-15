@@ -77,6 +77,8 @@ gpui-builder = { workspace = true, optional = true }
 gpui-audio-kit = { workspace = true, optional = true }
 gpui-miniapp = { workspace = true, optional = true }
 gpui-px = { workspace = true, default-features = false, optional = true }
+gpui-mesh = { workspace = true }
+gpui-dataset-transformation = { workspace = true }
 gpui-ui-kit = { workspace = true, optional = true }
 gpui_macos = { workspace = true, optional = true }
 glam = { workspace = true, optional = true }

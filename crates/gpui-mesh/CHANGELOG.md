@@ -1,0 +1,17 @@
+# Unreleased
+
+# 0.10.44
+
+## Added
+
+- Initial release. Mesh data model for 2D and 3D visualization: VTK-style
+  cells (vertex, line, triangle, quad, tetrahedron, hexahedron, wedge,
+  pyramid) with `u64` offsets and `u32` connectivity, scalar/vector/
+  tensor/complex point and cell fields with validity masks, structured
+  hexahedral grid construction, and full dataset validation.
+- Boundary-surface extraction with interior-face culling and bounded
+  `surface_chunks` iteration, so multi-million-cell datasets are consumed
+  in pieces instead of as one monolithic allocation.
+- `TimeSeries` for deforming datasets with shared topology.
+- No GPUI, wgpu, file-I/O, threading, or clock dependency: identical
+  behaviour on native targets and `wasm32-unknown-unknown`.

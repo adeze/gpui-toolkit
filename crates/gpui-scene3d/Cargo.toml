@@ -1,0 +1,68 @@
+[package]
+name = "gpui-scene3d"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "3D scene rendering for GPUI: camera, transfer functions, chunked GPU preparation, animation"
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "gpui_scene3d"
+
+[features]
+default = []
+# PNG frame export for movies and headless QA. Pure-Rust encoder, wasm-safe.
+png = ["dep:image"]
+# GPUI element that paints rendered frames as GPUI images. Native hosts use
+# it directly; browser hosts keep the default software path and drive the
+# same scene through their own canvas element.
+gpui = ["dep:gpui", "dep:image"]
+# MP4 muxing of rendered frames through the system `ffmpeg` (H.264/yuv420p).
+# Native only: wasm hosts download the PNG sequence instead. The encoder is
+# located at runtime, so builds never depend on it.
+mp4 = ["png"]
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+gpui-dataset-transformation = { workspace = true }
+gpui_macos = { workspace = true, features = ["test-support"] }
+gpui-miniapp = { workspace = true }
+
+[dependencies]
+gpui = { workspace = true, optional = true }
+gpui-mesh = { workspace = true }
+image = { workspace = true, optional = true }
+thiserror = { workspace = true }
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "render_bench"
+harness = false
+
+[[example]]
+name = "pcfan_airflow"
+path = "examples/pcfan_airflow.rs"
+required-features = ["png", "mp4"]
+
+[[example]]
+name = "speaker_port"
+path = "examples/speaker_port.rs"
+required-features = ["png", "mp4"]
+
+[[example]]
+name = "necking_bar"
+path = "examples/necking_bar.rs"
+required-features = ["png", "mp4"]
+
+[[example]]
+name = "interactive_viewer"
+path = "examples/interactive_viewer.rs"
+required-features = ["gpui"]

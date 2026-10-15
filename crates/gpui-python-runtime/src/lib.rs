@@ -14,6 +14,7 @@ mod error;
 #[cfg(feature = "gpui")]
 pub mod gpui_adapter;
 pub mod mesh_frames;
+pub mod mesh_api;
 pub mod meshplot;
 #[cfg(feature = "showcase")]
 pub mod native_mesh_plot;

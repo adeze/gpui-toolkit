@@ -1,5 +1,16 @@
 # Unreleased
 
+## Features
+
+- Mesh visualization bridge to `gpui-mesh` and
+  `gpui-dataset-transformation` (both now workspace dependencies): the
+  native extension exports `mesh_filters` (structured-grid dataset spec
+  plus slice/clip/threshold/isosurface/vorticity/divergence/Q-criterion/
+  magnitude ops, returning a JSON summary), `mesh_streamlines` (seeded
+  RK2 streamlines stitched into polylines), and `mesh_problem` (spec
+  validation). The new `gpui_toolkit.mesh` Python module wraps them with
+  `structured`, `slice_`, `clip`, `run`, `problem`, and `streamlines`.
+
 # 0.10.33
 
 ## Features

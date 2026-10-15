@@ -38,6 +38,20 @@ ui.vstack([
 ])
 ```
 
+## 3D mesh visualization (VTK-class)
+
+Three focused crates bring CFD/FEA-style visualization to the toolkit, all
+at version 0.10.44: `gpui-mesh` (dataset model with VTK-style cells and
+named point/cell fields, bounded surface chunking for large objects),
+`gpui-dataset-transformation` (plane slice/clip, threshold, isosurface,
+streamlines, vorticity/divergence/Q-criterion diagnostics, VTK/VTU/XDMF
+I/O, optional wgpu compute), and `gpui-scene3d` (orbit camera, transfer
+functions, clip planes and transparency, volume raycasting, WGSL shaders,
+1080p PNG/MP4 movies, an interactive viewer with a live cutting plane).
+From Python, `gpui_toolkit.mesh` builds structured grids and runs the
+same filters natively. Demos include a PC-fan airflow, an optimised
+speaker port, and a necking bar; see `crates/gpui-scene3d/README.md`.
+
 ## Explore the toolkit
 
 The browser landing page introduces the toolkit with separate paths for users

@@ -4,6 +4,31 @@
 
 ### Added
 
+- Three crates for VTK-class 2D/3D mesh visualization, all at the aligned
+  0.10.44 version: `gpui-mesh` (dataset model: VTK-style cells, named
+  point/cell fields, scalar/vector/tensor/complex fields, bounded surface
+  chunking for large objects, time-series support),
+  `gpui-dataset-transformation` (plane slice/clip, threshold, isosurface,
+  calculators, warps, glyphs, RK2 streamlines, probe,
+  vorticity/divergence/Q-criterion diagnostics, legacy VTK + VTU binary +
+  XDMF I/O, optional wgpu compute), and `gpui-scene3d` (orbit camera,
+  transfer functions, clip planes and transparency, MIP volume
+  raycasting, WGSL shaders, 1080p PNG/MP4 movies, and an interactive
+  viewer example with a live cutting plane). Demos: PC-fan airflow,
+  optimised speaker port, necking bar.
+- Python: `gpui_toolkit.mesh` builds structured meshes with named fields
+  and runs slice/clip/isosurface/threshold/diagnostics natively through
+  `gpui-python-runtime` (`mesh_filters`, `mesh_streamlines`).
+
+### Changed
+
+- Every workspace crate is aligned to version 0.10.44 (previously ranging
+  from 0.10.0 to 0.11.0); internal `gpui-*` dependency requirements now
+  pin `0.10`. The foreign-parent platform crates move from their 0.11.0
+  line back onto the shared 0.10.x line by request.
+
+### Added
+
 - Foreign-parent editor embedding stack (M1-M6): new `gpui-foreign-parent`
   core plus AU/iOS/Android/wasm/Windows/Linux bindings, all at 0.11.0;
   `gpui-au`, `gpui-ios`, and `gpui-android` moved to 0.11.0 with the new

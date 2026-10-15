@@ -2501,7 +2501,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-android"
-version = "0.11.0"
+version = "0.10.44"
 dependencies = [
  "accesskit",
  "android-activity",
@@ -2528,7 +2528,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-au"
-version = "0.11.0"
+version = "0.10.44"
 dependencies = [
  "anyhow",
  "core-foundation 0.10.1",
@@ -2552,7 +2552,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-audio-kit"
-version = "0.10.8"
+version = "0.10.44"
 dependencies = [
  "gpui-d3rs",
  "gpui-design",
@@ -2565,7 +2565,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-builder"
-version = "0.10.11"
+version = "0.10.44"
 dependencies = [
  "criterion",
  "gpui-design",
@@ -2583,7 +2583,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-component-lab"
-version = "0.10.8"
+version = "0.10.44"
 dependencies = [
  "anyhow",
  "clap",
@@ -2607,7 +2607,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-d3rs"
-version = "0.10.19"
+version = "0.10.44"
 dependencies = [
  "approx",
  "bytemuck",
@@ -2652,8 +2652,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpui-dataset-transformation"
+version = "0.10.44"
+dependencies = [
+ "bytemuck",
+ "criterion",
+ "gpui-mesh",
+ "pollster",
+ "sotf-wgpu",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "gpui-design"
-version = "0.10.7"
+version = "0.10.44"
 dependencies = [
  "serde",
  "serde_json",
@@ -2662,7 +2674,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-design-tools"
-version = "0.10.6"
+version = "0.10.44"
 dependencies = [
  "anyhow",
  "clap",
@@ -2674,11 +2686,11 @@ dependencies = [
 
 [[package]]
 name = "gpui-foreign-parent"
-version = "0.11.0"
+version = "0.10.44"
 
 [[package]]
 name = "gpui-hello-web"
-version = "0.10.2"
+version = "0.10.44"
 dependencies = [
  "gpui-design",
  "gpui-miniapp",
@@ -2692,7 +2704,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-ios"
-version = "0.11.0"
+version = "0.10.44"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -2721,7 +2733,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-keybinding"
-version = "0.10.7"
+version = "0.10.44"
 dependencies = [
  "criterion",
  "gpui-profiler",
@@ -2732,11 +2744,11 @@ dependencies = [
 
 [[package]]
 name = "gpui-layout-expr"
-version = "0.10.34"
+version = "0.10.44"
 
 [[package]]
 name = "gpui-linux-foreign"
-version = "0.11.0"
+version = "0.10.44"
 dependencies = [
  "gpui-foreign-parent",
  "sotf-gpui-toolkit-gpui",
@@ -2744,8 +2756,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpui-mesh"
+version = "0.10.44"
+dependencies = [
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "gpui-miniapp"
-version = "0.10.11"
+version = "0.10.44"
 dependencies = [
  "console_error_panic_hook",
  "gpui-android",
@@ -2765,7 +2784,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-pretext"
-version = "0.10.11"
+version = "0.10.44"
 dependencies = [
  "criterion",
  "gpui-profiler",
@@ -2778,14 +2797,14 @@ dependencies = [
 
 [[package]]
 name = "gpui-profiler"
-version = "0.10.3"
+version = "0.10.44"
 dependencies = [
  "stats_alloc",
 ]
 
 [[package]]
 name = "gpui-px"
-version = "0.10.14"
+version = "0.10.44"
 dependencies = [
  "criterion",
  "glam",
@@ -2809,7 +2828,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-python-runtime"
-version = "0.10.34"
+version = "0.10.44"
 dependencies = [
  "arrow-array",
  "arrow-cast",
@@ -2819,8 +2838,10 @@ dependencies = [
  "gpui-audio-kit",
  "gpui-builder",
  "gpui-d3rs",
+ "gpui-dataset-transformation",
  "gpui-design",
  "gpui-design-tools",
+ "gpui-mesh",
  "gpui-miniapp",
  "gpui-pretext",
  "gpui-profiler",
@@ -2842,11 +2863,11 @@ dependencies = [
 
 [[package]]
 name = "gpui-release-gates"
-version = "0.10.34"
+version = "0.10.44"
 
 [[package]]
 name = "gpui-scaffolder"
-version = "0.10.4"
+version = "0.10.44"
 dependencies = [
  "anyhow",
  "clap",
@@ -2856,8 +2877,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpui-scene3d"
+version = "0.10.44"
+dependencies = [
+ "criterion",
+ "gpui-dataset-transformation",
+ "gpui-mesh",
+ "gpui-miniapp",
+ "image",
+ "sotf-gpui-toolkit-gpui",
+ "sotf-gpui-toolkit-gpui-macos",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "gpui-showcase"
-version = "0.10.6"
+version = "0.10.44"
 dependencies = [
  "anyhow",
  "criterion",
@@ -2882,7 +2917,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-showcase-android"
-version = "0.10.1"
+version = "0.10.44"
 dependencies = [
  "android-activity",
  "android_logger",
@@ -2895,7 +2930,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-showcase-ios"
-version = "0.10.0"
+version = "0.10.44"
 dependencies = [
  "gpui-ios",
  "gpui-showcase",
@@ -2907,7 +2942,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-showcase-tvos"
-version = "0.10.0"
+version = "0.10.44"
 dependencies = [
  "gpui-ios",
  "gpui-showcase",
@@ -2919,7 +2954,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-spinorama"
-version = "0.10.0"
+version = "0.10.44"
 dependencies = [
  "base64 0.22.1",
  "gpui-builder",
@@ -2939,7 +2974,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-themes"
-version = "0.10.8"
+version = "0.10.44"
 dependencies = [
  "gpui-design",
  "gpui-miniapp",
@@ -2951,7 +2986,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-toolkit"
-version = "0.10.34"
+version = "0.10.44"
 dependencies = [
  "gpui-au",
  "gpui-audio-kit",
@@ -2976,7 +3011,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-toolkit-cli"
-version = "0.10.34"
+version = "0.10.44"
 dependencies = [
  "clap",
  "gpui-component-lab",
@@ -2992,7 +3027,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-ui-kit"
-version = "0.10.43"
+version = "0.10.44"
 dependencies = [
  "block2 0.6.2",
  "criterion",
@@ -3018,7 +3053,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-ui-kit-macros"
-version = "0.10.8"
+version = "0.10.44"
 dependencies = [
  "gpui-layout-expr",
  "gpui-ui-kit",
@@ -3031,7 +3066,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-web-foreign"
-version = "0.11.0"
+version = "0.10.44"
 dependencies = [
  "gpui-foreign-parent",
  "js-sys",
@@ -3042,7 +3077,7 @@ dependencies = [
 
 [[package]]
 name = "gpui-win-foreign"
-version = "0.11.0"
+version = "0.10.44"
 dependencies = [
  "env_logger",
  "gpui-foreign-parent",

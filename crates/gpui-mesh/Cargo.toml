@@ -1,0 +1,19 @@
+[package]
+name = "gpui-mesh"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Unstructured and structured mesh data model for GPUI visualization"
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "gpui_mesh"
+
+[dependencies]
+thiserror = { workspace = true }

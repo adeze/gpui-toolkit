@@ -1,0 +1,38 @@
+[package]
+name = "gpui-dataset-transformation"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Dataset to dataset transformations: slice, clip, threshold, isosurface, warp"
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "gpui_dataset_transformation"
+
+[features]
+default = []
+# GPU compute for flow diagnostics through wgpu: Metal on Apple Silicon
+# (the MLX-class hardware path), Vulkan/CUDA-class adapters on Linux and
+# Windows, WebGPU in browsers with an async host. Native hosts get a
+# synchronous API; the CPU filters remain the golden reference everywhere.
+gpu = ["dep:wgpu", "dep:bytemuck", "dep:pollster"]
+
+[dependencies]
+bytemuck = { workspace = true, optional = true }
+gpui-mesh = { workspace = true }
+pollster = { workspace = true, optional = true }
+thiserror = { workspace = true }
+wgpu = { workspace = true, optional = true }
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "flow_bench"
+harness = false

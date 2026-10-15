@@ -9024,8 +9024,26 @@ fn dataset_arrow_ipc(
     Ok(PyBytes::new(py, &bytes).unbind())
 }
 
+#[pyfunction]
+fn mesh_filters(request_json: &str) -> PyResult<String> {
+    crate::mesh_api::mesh_filters(request_json).map_err(PyValueError::new_err)
+}
+
+#[pyfunction]
+fn mesh_streamlines(request_json: &str) -> PyResult<String> {
+    crate::mesh_api::mesh_streamlines(request_json).map_err(PyValueError::new_err)
+}
+
+#[pyfunction]
+fn mesh_problem(spec_json: &str) -> String {
+    crate::mesh_api::mesh_problem(spec_json)
+}
+
 #[pymodule]
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_function(wrap_pyfunction!(mesh_filters, module)?)?;
+    module.add_function(wrap_pyfunction!(mesh_streamlines, module)?)?;
+    module.add_function(wrap_pyfunction!(mesh_problem, module)?)?;
     module.add_function(wrap_pyfunction!(interpolate_number, module)?)?;
     module.add_function(wrap_pyfunction!(interpolate_round, module)?)?;
     module.add_function(wrap_pyfunction!(interpolate_number_array, module)?)?;
