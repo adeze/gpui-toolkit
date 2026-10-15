@@ -6,9 +6,16 @@ consume a `gpui_mesh::DataSet` and produce a new `DataSet`.
 Filters: plane `slice` (cut), `clip_halfspace`, scalar `threshold`,
 marching-tetrahedra `isosurface`, derived-field calculators (vector and
 complex magnitude/phase), `warp_by_vector` / `warp_by_scalar`, vector
-`glyphs`, and RK2 `streamlines`. Flow diagnostics (`vorticity`,
-`divergence`, `q_criterion`) use per-tetrahedron gradients averaged to
-points; the `gpu` feature runs the same diagnostics through wgpu compute
+`glyphs`, and RK2 `streamlines`. Visualisation geometry: `solid_arrows`
+(closed 3D shaft+cone arrows), `tensor_glyphs` (ellipsoids from the
+eigendecomposition), `streamtubes` / `stream_ribbons` (parallel-transport
+extrusions), `dashed_lines` (animated marching-ants dashes), and
+`contour_lines` (marching-triangles isolines). Flow diagnostics
+(`vorticity`, `divergence`, `q_criterion`, `lambda2`,
+`swirling_strength`) use per-tetrahedron gradients averaged to points;
+vortex cores are `isosurface(lambda2, 0)`. `lic` appends a
+line-integral-convolution streak field, and `particle_frames` advects
+seeded particles through a `TimeSeries` with fading trails; the `gpu` feature runs the same diagnostics through wgpu compute
 (Metal on Apple Silicon, Vulkan/CUDA-class adapters elsewhere), with a
 prepared point-reduction kernel that is about 5x faster than the CPU at
 110k points in local benchmarks. I/O covers legacy VTK text, VTU XML with

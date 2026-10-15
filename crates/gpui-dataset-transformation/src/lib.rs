@@ -13,12 +13,17 @@
 mod base64;
 mod calculator;
 mod clip;
+mod contours;
+mod eigen;
 mod flow;
 mod glyph;
 #[cfg(feature = "gpu")]
 pub mod gpu;
 mod interp;
 mod isosurface;
+mod lic;
+mod lines;
+mod particles;
 mod plane;
 mod probe;
 mod streamline;
@@ -30,9 +35,15 @@ mod xdmf;
 
 pub use calculator::{complex_magnitude, complex_phase, vector_magnitude};
 pub use clip::{clip_halfspace, slice};
-pub use flow::{divergence, q_criterion, vorticity, vorticity_magnitude};
-pub use glyph::{GlyphKind, glyphs};
+pub use contours::contour_lines;
+pub use flow::{
+    divergence, lambda2, q_criterion, swirling_strength, vorticity, vorticity_magnitude,
+};
+pub use glyph::{GlyphKind, glyphs, solid_arrows, tensor_glyphs};
 pub use isosurface::isosurface;
+pub use lic::lic;
+pub use lines::{dashed_lines, stream_ribbons, streamtubes};
+pub use particles::{ParticleOptions, particle_frames};
 pub use plane::Plane;
 pub use probe::probe;
 pub use streamline::streamlines;

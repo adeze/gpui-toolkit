@@ -15,6 +15,7 @@ pub mod animate;
 pub mod camera;
 #[cfg(feature = "gpui")]
 pub mod element;
+pub mod legend;
 pub mod movie;
 pub mod prepare;
 pub mod raster;
@@ -25,10 +26,14 @@ pub mod volume;
 
 pub use animate::Player;
 pub use camera::{Camera, Projection};
+pub use legend::{
+    Annotation, ColorBar, ColorBarLayout, Rect, draw_axis_triad, draw_colorbar, layout_colorbar,
+    nice_ticks,
+};
 pub use movie::{MovieError, TimedFrame, frame_rate, validate_frames};
 pub use prepare::{GpuChunk, prepare_chunks};
 pub use raster::{Frame, render};
-pub use scene::{Actor, ClipPlane, Scene};
+pub use scene::{Actor, ClipBox, ClipPlane, Scene};
 pub use transfer::TransferFunction;
 pub use volume::{VolumeOptions, VolumeRenderer, raycast_volume};
 

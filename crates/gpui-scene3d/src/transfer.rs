@@ -13,6 +13,9 @@ pub struct TransferFunction {
     stops: Vec<(f64, [f32; 4])>,
     /// Whether the domain is mapped logarithmically (positive ranges only).
     pub log_scale: bool,
+    /// Number of discrete colour bands (filled-contour mode); `None` is
+    /// a continuous ramp.
+    pub bands: Option<usize>,
 }
 
 impl TransferFunction {
@@ -53,6 +56,7 @@ impl TransferFunction {
             range,
             stops,
             log_scale: false,
+            bands: None,
         }
     }
 
@@ -60,6 +64,13 @@ impl TransferFunction {
     #[must_use]
     pub fn log(mut self) -> Self {
         self.log_scale = true;
+        self
+    }
+
+    /// Quantises the ramp into `bands` discrete colours (filled contours).
+    #[must_use]
+    pub fn banded(mut self, bands: usize) -> Self {
+        self.bands = Some(bands.max(1));
         self
     }
 
@@ -74,7 +85,14 @@ impl TransferFunction {
         if hi <= lo {
             return 0.0;
         }
-        ((value - lo) / (hi - lo)).clamp(0.0, 1.0)
+        let t = ((value - lo) / (hi - lo)).clamp(0.0, 1.0);
+        match self.bands {
+            Some(bands) => {
+                let band = (t * bands as f64).floor().min(bands as f64 - 1.0);
+                (band + 0.5) / bands as f64
+            }
+            None => t,
+        }
     }
 
     /// Colour for a scalar value; NaN maps to transparent.

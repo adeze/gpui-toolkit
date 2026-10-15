@@ -19,6 +19,13 @@
 - Python: `gpui_toolkit.mesh` builds structured meshes with named fields
   and runs slice/clip/isosurface/threshold/diagnostics natively through
   `gpui-python-runtime` (`mesh_filters`, `mesh_streamlines`).
+- Flow-visualisation wave on the three crates: solid 3D arrow glyphs and
+  tensor ellipsoid glyphs, streamtubes/ribbons, animated dashed
+  streamlines, contour lines plus banded filled contours, LIC streak
+  fields, lambda-2/swirling-strength vortex criteria, time-dependent
+  particle advection with trails, a colour-bar/legend with axis triad
+  and annotations, and multi-plane plus clip-box clipping in the
+  interactive viewer (new `flow_showcase` demo).
 
 ### Changed
 

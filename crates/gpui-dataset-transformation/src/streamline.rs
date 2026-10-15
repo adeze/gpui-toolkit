@@ -5,7 +5,7 @@
 use crate::TransformError;
 use gpui_mesh::{Association, CellType, Cells, DataSet};
 
-fn tetrahedralize(kind: CellType, n: &[u32]) -> Vec<[u32; 4]> {
+pub(crate) fn tetrahedralize(kind: CellType, n: &[u32]) -> Vec<[u32; 4]> {
     match kind {
         CellType::Tetra => vec![[n[0], n[1], n[2], n[3]]],
         // Six tetrahedra around the 0-6 body diagonal. Every face diagonal
@@ -61,14 +61,31 @@ fn barycentric(tet: [[f64; 3]; 4], p: [f64; 3]) -> Option<[f64; 4]> {
     weights.iter().all(|&x| x >= -1e-9).then_some(weights)
 }
 
-struct Tracer<'a> {
+pub(crate) struct Tracer<'a> {
     dataset: &'a DataSet,
     vectors: &'a [[f64; 3]],
-    tets: Vec<[u32; 4]>,
+    pub(crate) tets: Vec<[u32; 4]>,
 }
 
-impl Tracer<'_> {
-    fn velocity(&self, p: [f64; 3]) -> Option<[f64; 3]> {
+impl<'a> Tracer<'a> {
+    /// Builds a tracer over every volume cell of `dataset`.
+    pub(crate) fn new(dataset: &'a DataSet, vectors: &'a [[f64; 3]]) -> Self {
+        let mut tets = Vec::new();
+        for cell in 0..dataset.cell_count() {
+            let kind = dataset.cells.types[cell];
+            if kind.is_volume() {
+                let nodes = dataset.cells.cell(cell).unwrap_or(&[]);
+                tets.extend(tetrahedralize(kind, nodes));
+            }
+        }
+        Self {
+            dataset,
+            vectors,
+            tets,
+        }
+    }
+
+    pub(crate) fn velocity(&self, p: [f64; 3]) -> Option<[f64; 3]> {
         for tet in &self.tets {
             let corners = [
                 self.dataset.positions[tet[0] as usize],
@@ -118,24 +135,12 @@ pub fn streamlines(
             field: field_name.to_string(),
             reason: "streamlines require a 3-vector field".into(),
         })?;
-    let mut tets = Vec::new();
-    for cell in 0..dataset.cell_count() {
-        let kind = dataset.cells.types[cell];
-        if kind.is_volume() {
-            let nodes = dataset.cells.cell(cell).unwrap_or(&[]);
-            tets.extend(tetrahedralize(kind, nodes));
-        }
-    }
-    if tets.is_empty() {
+    let tracer = Tracer::new(dataset, vectors);
+    if tracer.tets.is_empty() {
         return Err(TransformError::Degenerate(
             "dataset holds no volume cells".into(),
         ));
     }
-    let tracer = Tracer {
-        dataset,
-        vectors,
-        tets,
-    };
     let mut positions: Vec<[f64; 3]> = Vec::new();
     let mut cells: Vec<(CellType, Vec<u32>)> = Vec::new();
     for seed in seeds {

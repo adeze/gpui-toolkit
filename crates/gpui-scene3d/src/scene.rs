@@ -43,6 +43,57 @@ impl ClipPlane {
     }
 }
 
+/// An axis-aligned clipping box: the intersection of six half-spaces.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ClipBox {
+    /// Minimum corner kept.
+    pub min: [f64; 3],
+    /// Maximum corner kept.
+    pub max: [f64; 3],
+}
+
+impl ClipBox {
+    /// Box from dataset bounds.
+    #[must_use]
+    pub fn from_bounds(bounds: gpui_mesh::Bounds) -> Self {
+        Self {
+            min: bounds.min,
+            max: bounds.max,
+        }
+    }
+
+    /// The six clipping planes (positive half-spaces kept).
+    #[must_use]
+    pub fn planes(&self) -> [ClipPlane; 6] {
+        [
+            ClipPlane {
+                origin: [self.min[0], 0.0, 0.0],
+                normal: [1.0, 0.0, 0.0],
+            },
+            ClipPlane {
+                origin: [self.max[0], 0.0, 0.0],
+                normal: [-1.0, 0.0, 0.0],
+            },
+            ClipPlane {
+                origin: [0.0, self.min[1], 0.0],
+                normal: [0.0, 1.0, 0.0],
+            },
+            ClipPlane {
+                origin: [0.0, self.max[1], 0.0],
+                normal: [0.0, -1.0, 0.0],
+            },
+            ClipPlane {
+                origin: [0.0, 0.0, self.min[2]],
+                normal: [0.0, 0.0, 1.0],
+            },
+            ClipPlane {
+                origin: [0.0, 0.0, self.max[2]],
+                normal: [0.0, 0.0, -1.0],
+            },
+        ]
+    }
+}
+
 /// One dataset placed in a scene, coloured by an optional field.
 #[derive(Debug, Clone)]
 pub struct Actor {
@@ -122,6 +173,13 @@ impl Actor {
         self
     }
 
+    /// Clips to an axis-aligned box (adds its six planes).
+    #[must_use]
+    pub fn clip_box(mut self, clip_box: ClipBox) -> Self {
+        self.clip_planes.extend(clip_box.planes());
+        self
+    }
+
     /// Whether this actor needs the transparent pass.
     #[must_use]
     pub fn is_transparent(&self) -> bool {
@@ -151,6 +209,8 @@ pub struct Scene {
     pub actors: Vec<Actor>,
     /// Background RGBA in `[0,1]`.
     pub background: [f32; 4],
+    /// Text annotations for hosts with a text system (GPUI element).
+    pub annotations: Vec<crate::legend::Annotation>,
 }
 
 impl Scene {
@@ -159,6 +219,7 @@ impl Scene {
         Self {
             actors: Vec::new(),
             background: [0.08, 0.09, 0.11, 1.0],
+            annotations: Vec::new(),
         }
     }
 
@@ -166,6 +227,13 @@ impl Scene {
     #[must_use]
     pub fn with_actor(mut self, actor: Actor) -> Self {
         self.actors.push(actor);
+        self
+    }
+
+    /// Adds a text annotation at normalised frame coordinates.
+    #[must_use]
+    pub fn with_annotation(mut self, annotation: crate::legend::Annotation) -> Self {
+        self.annotations.push(annotation);
         self
     }
 

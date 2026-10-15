@@ -1,5 +1,10 @@
 # Unreleased
 
+## Added
+
+- `Field::tensor` / `Field::complex` constructors and `as_tensor` /
+  `as_complex` views, completing the tensor and complex field API.
+
 # 0.10.44
 
 ## Added

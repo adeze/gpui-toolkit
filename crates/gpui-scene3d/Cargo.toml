@@ -63,6 +63,11 @@ path = "examples/necking_bar.rs"
 required-features = ["png", "mp4"]
 
 [[example]]
+name = "flow_showcase"
+path = "examples/flow_showcase.rs"
+required-features = ["png", "mp4"]
+
+[[example]]
 name = "interactive_viewer"
 path = "examples/interactive_viewer.rs"
 required-features = ["gpui"]

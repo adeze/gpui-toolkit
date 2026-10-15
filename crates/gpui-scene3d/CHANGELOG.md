@@ -1,5 +1,18 @@
 # Unreleased
 
+## Added
+
+- `legend` module: colour-bar data (nice ticks, formatted labels),
+  pixel layout, gradient-strip painting into software frames, axis
+  triad overlay, and `Annotation` text anchors on `Scene`.
+- `TransferFunction::banded` for filled contours.
+- `ClipBox` clipping (six planes from bounds) via `Actor::clip_box`;
+  the interactive viewer now drives three orthogonal cutting planes
+  simultaneously plus a clip box with inset steps.
+- `flow_showcase` example: Taylor-Green vortex exercising arrows,
+  streamtubes/ribbons, dashed streamlines, LIC, contours, tensor
+  glyphs, lambda-2 cores, legend, and a 48-frame particle movie.
+
 # 0.10.44
 
 ## Added

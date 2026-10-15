@@ -113,6 +113,32 @@ impl Field {
         }
     }
 
+    /// Creates a symmetric-tensor point field (xx, yy, zz, xy, yz, xz).
+    pub fn tensor(name: impl Into<Arc<str>>, values: impl Into<Arc<[[f64; 6]]>>) -> Self {
+        let name = name.into();
+        Self {
+            label: name.clone(),
+            name,
+            unit: None,
+            association: Association::Point,
+            data: FieldData::Tensor(values.into()),
+            valid: None,
+        }
+    }
+
+    /// Creates a complex point field (re, im per entry).
+    pub fn complex(name: impl Into<Arc<str>>, values: impl Into<Arc<[[f64; 2]]>>) -> Self {
+        let name = name.into();
+        Self {
+            label: name.clone(),
+            name,
+            unit: None,
+            association: Association::Point,
+            data: FieldData::Complex(values.into()),
+            valid: None,
+        }
+    }
+
     /// Sets the display label and unit.
     #[must_use]
     pub fn labelled(mut self, label: impl Into<Arc<str>>, unit: impl Into<Arc<str>>) -> Self {
@@ -142,6 +168,24 @@ impl Field {
     pub fn as_vector(&self) -> Option<&[[f64; 3]]> {
         match &self.data {
             FieldData::Vector(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// Tensor view, when this field is a symmetric-tensor field.
+    #[must_use]
+    pub fn as_tensor(&self) -> Option<&[[f64; 6]]> {
+        match &self.data {
+            FieldData::Tensor(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// Complex view, when this field is a complex field.
+    #[must_use]
+    pub fn as_complex(&self) -> Option<&[[f64; 2]]> {
+        match &self.data {
+            FieldData::Complex(v) => Some(v),
             _ => None,
         }
     }

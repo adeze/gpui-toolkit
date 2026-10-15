@@ -11,8 +11,8 @@
 // Rust guideline compliant 2026-02-21
 
 use gpui_dataset_transformation::{
-    Plane, ThresholdMode, clip_halfspace, divergence, isosurface, q_criterion, slice, streamlines,
-    threshold, vector_magnitude, vorticity, vorticity_magnitude,
+    Plane, ThresholdMode, clip_halfspace, divergence, isosurface, lambda2, q_criterion, slice,
+    streamlines, swirling_strength, threshold, vector_magnitude, vorticity, vorticity_magnitude,
 };
 use gpui_mesh::{Association, DataSet, Field};
 use serde::Deserialize;
@@ -26,8 +26,9 @@ use serde_json::{Value, json};
 /// invalid, a field length does not match the point count, or a field kind
 /// is unknown.
 pub fn dataset_from_spec(spec: &Value) -> Result<DataSet, String> {
-    let grid: GridSpec = serde_json::from_value(spec.get("structured").cloned().unwrap_or(Value::Null))
-        .map_err(|e| format!("invalid 'structured' grid: {e}"))?;
+    let grid: GridSpec =
+        serde_json::from_value(spec.get("structured").cloned().unwrap_or(Value::Null))
+            .map_err(|e| format!("invalid 'structured' grid: {e}"))?;
     let mut dataset = DataSet::structured_grid(
         spec.get("id").and_then(Value::as_str).unwrap_or("mesh"),
         grid.dims,
@@ -103,15 +104,25 @@ pub fn apply_op(dataset: &DataSet, op: &Value) -> Result<DataSet, String> {
             )
             .map_err(err)
         }
-        "isosurface" => isosurface(dataset, str_field(op, "field")?, f64_field(op, "value")?).map_err(err),
+        "isosurface" => {
+            isosurface(dataset, str_field(op, "field")?, f64_field(op, "value")?).map_err(err)
+        }
         "vorticity" => vorticity(dataset, str_field(op, "field")?, "vorticity").map_err(err),
         "vorticity_magnitude" => {
-            vorticity_magnitude(dataset, str_field(op, "field")?, "vorticity_magnitude").map_err(err)
+            vorticity_magnitude(dataset, str_field(op, "field")?, "vorticity_magnitude")
+                .map_err(err)
         }
         "divergence" => divergence(dataset, str_field(op, "field")?, "divergence").map_err(err),
         "q_criterion" => q_criterion(dataset, str_field(op, "field")?, "q_criterion").map_err(err),
+        "lambda2" => lambda2(dataset, str_field(op, "field")?, "lambda2").map_err(err),
+        "swirling_strength" => {
+            swirling_strength(dataset, str_field(op, "field")?, "swirling_strength").map_err(err)
+        }
         "magnitude" => {
-            let out = op.get("output").and_then(Value::as_str).unwrap_or("magnitude");
+            let out = op
+                .get("output")
+                .and_then(Value::as_str)
+                .unwrap_or("magnitude");
             vector_magnitude(dataset, str_field(op, "field")?, out).map_err(err)
         }
         other => Err(format!("unknown mesh op '{other}'")),
@@ -161,10 +172,9 @@ pub fn mesh_streamlines(request_json: &str) -> Result<String, String> {
         .get("velocity_field")
         .and_then(Value::as_str)
         .unwrap_or("velocity");
-    let seeds: Vec<[f64; 3]> = serde_json::from_value(
-        request.get("seeds").cloned().unwrap_or(Value::Null),
-    )
-    .map_err(|e| format!("invalid 'seeds': {e}"))?;
+    let seeds: Vec<[f64; 3]> =
+        serde_json::from_value(request.get("seeds").cloned().unwrap_or(Value::Null))
+            .map_err(|e| format!("invalid 'seeds': {e}"))?;
     let step = request.get("step").and_then(Value::as_f64).unwrap_or(0.05);
     let max_steps = request
         .get("max_steps")
@@ -176,10 +186,7 @@ pub fn mesh_streamlines(request_json: &str) -> Result<String, String> {
     let mut polylines: Vec<Vec<[f64; 3]>> = Vec::new();
     for cell in 0..lines.cell_count() {
         let nodes = lines.cells.cell(cell).unwrap_or(&[]);
-        let segment: Vec<[f64; 3]> = nodes
-            .iter()
-            .map(|&n| lines.positions[n as usize])
-            .collect();
+        let segment: Vec<[f64; 3]> = nodes.iter().map(|&n| lines.positions[n as usize]).collect();
         match polylines.last_mut() {
             Some(current)
                 if !current.is_empty()
@@ -359,9 +366,17 @@ mod tests {
     fn unknown_op_and_bad_field_are_errors() {
         let mut request: Value = serde_json::from_str(&rotation_request()).unwrap();
         request["ops"] = json!([{"op": "explode"}]);
-        assert!(mesh_filters(&request.to_string()).unwrap_err().contains("explode"));
+        assert!(
+            mesh_filters(&request.to_string())
+                .unwrap_err()
+                .contains("explode")
+        );
         request["ops"] = json!([{"op": "threshold", "field": "nope", "min": 0.0, "max": 1.0}]);
-        assert!(mesh_filters(&request.to_string()).unwrap_err().contains("nope"));
+        assert!(
+            mesh_filters(&request.to_string())
+                .unwrap_err()
+                .contains("nope")
+        );
         assert!(!mesh_problem("{\"dataset\": {\"structured\": {\"dims\": [0, 2, 2]}}}").is_empty());
     }
 }

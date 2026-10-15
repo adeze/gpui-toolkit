@@ -18,7 +18,16 @@ discard semantics identical to the software path). The software
 rasterizer covers headless QA, movie frames, and wasm fallback, with
 world-space clipping planes and a back-to-front sorted transparent pass.
 `raycast_volume` / `VolumeRenderer` add front-to-back volume raycasting
-over a retained uniform tet grid with clipping planes. Enable the `png`
+over a retained uniform tet grid with clipping planes. Actors clip
+against any number of planes, or a `ClipBox` (six planes from bounds);
+the interactive viewer example drives three orthogonal planes plus a
+clip box. `legend` computes colour bars (nice ticks, formatted labels,
+pixel layout) and draws the gradient strip and an axis triad into
+software frames; scenes also carry text `Annotation`s for GPUI hosts.
+`TransferFunction::banded` quantises a ramp for filled contours.
+Examples: `pcfan_airflow`, `speaker_port`, `necking_bar`,
+`interactive_viewer`, and `flow_showcase` (Taylor-Green vortex exercising
+arrows, tubes, LIC, contours, tensor glyphs, particles, legend). Enable the `png`
 feature for PNG frame export, and `mp4` (native only) to mux frames to
 H.264 MP4 through the system `ffmpeg`.
 

@@ -127,6 +127,12 @@ pub struct ViewerProbe {
     pub clip_axis: usize,
     /// Cutting-plane offset along its axis.
     pub clip_offset: f64,
+    /// Enabled state of the three axis planes.
+    pub planes_enabled: [bool; 3],
+    /// Whether the clip box is enabled.
+    pub box_enabled: bool,
+    /// Clip-box inset as a fraction of the bounds extent per side.
+    pub box_inset: f64,
 }
 
 impl Default for ViewerProbe {
@@ -139,6 +145,9 @@ impl Default for ViewerProbe {
             clip_enabled: false,
             clip_axis: 1,
             clip_offset: 0.0,
+            planes_enabled: [false; 3],
+            box_enabled: false,
+            box_inset: 0.0,
         }
     }
 }
@@ -151,11 +160,14 @@ struct Viewer {
     camera: SceneCamera,
     home: Camera,
     drag: Option<DragState>,
-    clip_enabled: bool,
+    plane_enabled: [bool; 3],
     clip_axis: usize,
-    clip_offset: f64,
+    plane_offset: [f64; 3],
+    box_enabled: bool,
+    box_inset: f64,
     bounds: gpui_mesh::Bounds,
     probe: SharedProbe,
+    panel_scroll: gpui::ScrollHandle,
 }
 
 impl Viewer {
@@ -168,7 +180,8 @@ impl Viewer {
 
     fn with_probe(_cx: &mut Context<Self>, probe: SharedProbe) -> Self {
         let dataset = fan_dataset();
-        let scene = Self::scene_for(&dataset, false, 1, 0.0);
+        let bounds0 = dataset.bounds().unwrap();
+        let scene = Self::scene_for(&dataset, &[(false, 0.0); 3], bounds0, false, 0.0);
         let camera = fitted_camera(&scene);
         let home = *camera.borrow();
         let bounds = dataset.bounds().unwrap();
@@ -177,11 +190,14 @@ impl Viewer {
             camera,
             home,
             drag: None,
-            clip_enabled: false,
+            plane_enabled: [false; 3],
             clip_axis: 1,
-            clip_offset: 0.0,
+            plane_offset: [0.0; 3],
+            box_enabled: false,
+            box_inset: 0.0,
             bounds,
             probe,
+            panel_scroll: gpui::ScrollHandle::new(),
         };
         viewer.publish_probe();
         viewer
@@ -194,31 +210,58 @@ impl Viewer {
             elevation: camera.elevation,
             distance: camera.distance,
             target: camera.target,
-            clip_enabled: self.clip_enabled,
+            clip_enabled: self.plane_enabled[self.clip_axis],
             clip_axis: self.clip_axis,
-            clip_offset: self.clip_offset,
+            clip_offset: self.plane_offset[self.clip_axis],
+            planes_enabled: self.plane_enabled,
+            box_enabled: self.box_enabled,
+            box_inset: self.box_inset,
         };
     }
 
-    fn scene_for(dataset: &DataSet, clip_enabled: bool, axis: usize, offset: f64) -> Scene {
+    fn scene_for(
+        dataset: &DataSet,
+        planes: &[(bool, f64); 3],
+        bounds: gpui_mesh::Bounds,
+        box_enabled: bool,
+        box_inset: f64,
+    ) -> Scene {
         let mut actor = Actor::new(dataset.clone())
             .coloured_by("pressure", TransferFunction::coolwarm([-40.0, 160.0]));
-        if clip_enabled {
-            let mut origin = [0.0; 3];
-            let mut normal = [0.0; 3];
-            origin[axis] = offset;
-            normal[axis] = 1.0;
-            actor = actor.clip(ClipPlane { origin, normal });
+        for (axis, (enabled, offset)) in planes.iter().enumerate() {
+            if *enabled {
+                let mut origin = [0.0; 3];
+                let mut normal = [0.0; 3];
+                origin[axis] = *offset;
+                normal[axis] = 1.0;
+                actor = actor.clip(ClipPlane { origin, normal });
+            }
+        }
+        if box_enabled {
+            let mut min = bounds.min;
+            let mut max = bounds.max;
+            for axis in 0..3 {
+                let inset = (max[axis] - min[axis]) * box_inset;
+                min[axis] += inset;
+                max[axis] -= inset;
+            }
+            actor = actor.clip_box(gpui_scene3d::ClipBox { min, max });
         }
         Scene::new().with_actor(actor)
     }
 
     fn current_scene(&self) -> Scene {
+        let planes = [
+            (self.plane_enabled[0], self.plane_offset[0]),
+            (self.plane_enabled[1], self.plane_offset[1]),
+            (self.plane_enabled[2], self.plane_offset[2]),
+        ];
         Self::scene_for(
             &self.dataset,
-            self.clip_enabled,
-            self.clip_axis,
-            self.clip_offset,
+            &planes,
+            self.bounds,
+            self.box_enabled,
+            self.box_inset,
         )
     }
 
@@ -232,7 +275,8 @@ impl Viewer {
     fn step_plane(&mut self, direction: f64) {
         let (min, max) = self.axis_extent();
         let step = (max - min) * 0.02 * direction;
-        self.clip_offset = (self.clip_offset + step).clamp(min, max);
+        let offset = &mut self.plane_offset[self.clip_axis];
+        *offset = (*offset + step).clamp(min, max);
     }
 }
 
@@ -248,7 +292,7 @@ impl Render for Viewer {
         };
         let (min, max) = self.axis_extent();
         let plane_percent = if max > min {
-            (self.clip_offset - min) / (max - min) * 100.0
+            (self.plane_offset[self.clip_axis] - min) / (max - min) * 100.0
         } else {
             0.0
         };
@@ -303,11 +347,11 @@ impl Render for Viewer {
                         this.camera.borrow_mut().pan(dx, dy);
                     }
                     DragMode::Plane => {
-                        this.clip_enabled = true;
+                        this.plane_enabled[this.clip_axis] = true;
                         let (min, max) = this.axis_extent();
                         let fraction = f64::from(dy) * 0.002;
-                        this.clip_offset =
-                            (this.clip_offset - fraction * (max - min)).clamp(min, max);
+                        let offset = &mut this.plane_offset[this.clip_axis];
+                        *offset = (*offset - fraction * (max - min)).clamp(min, max);
                     }
                 }
                 cx.notify();
@@ -338,12 +382,15 @@ impl Render for Viewer {
             }));
 
         let panel = div()
+            .id("control-panel")
             .w(px(250.0))
             .h_full()
             .flex()
             .flex_col()
-            .gap_3()
-            .p_4()
+            .gap_2()
+            .p_3()
+            .overflow_y_scroll()
+            .track_scroll(&self.panel_scroll)
             .bg(rgb(0x1d2026))
             .text_color(rgb(0xe8eaf0))
             .child(div().text_lg().child("PC fan — pressure"))
@@ -372,8 +419,37 @@ impl Render for Viewer {
             )
             .child(div().text_sm().child(format!(
                 "Plane: {} at {:.1}% (Alt+drag in view moves it)",
-                if self.clip_enabled { axis_name } else { "off" },
+                if self.plane_enabled[self.clip_axis] {
+                    axis_name
+                } else {
+                    "off"
+                },
                 plane_percent
+            )))
+            .child(div().text_sm().child(format!(
+                "Planes on: {}",
+                ["X", "Y", "Z"]
+                    .iter()
+                    .zip(self.plane_enabled.iter())
+                    .filter(|(_, on)| **on)
+                    .map(|(name, _)| *name)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )))
+            .child(div().mt_2().text_base().child("Clip box"))
+            .child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .items_center()
+                    .child(self.box_toggle_button(cx))
+                    .child(self.box_step_button("- inset", -1.0, cx))
+                    .child(self.box_step_button("+ inset", 1.0, cx)),
+            )
+            .child(div().text_sm().child(format!(
+                "Box: {} at {:.0}% inset",
+                if self.box_enabled { "on" } else { "off" },
+                self.box_inset * 100.0
             )))
             .child(
                 div()
@@ -384,9 +460,12 @@ impl Render for Viewer {
                         "Azimuth {azimuth:.2} · Elevation {elevation:.2} · Distance {distance:.2}"
                     )),
             )
-            .child(div().text_sm().text_color(rgb(0x9aa1ad)).child(
-                "Camera state is shared with the renderer; every control repaints the same scene.",
-            ));
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(0x9aa1ad))
+                    .child("Every control repaints the same scene."),
+            );
 
         let _ = camera_state;
         div().flex().size_full().child(viewport).child(panel)
@@ -395,7 +474,7 @@ impl Render for Viewer {
 
 impl Viewer {
     fn toggle_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let active = self.clip_enabled;
+        let active = self.plane_enabled[self.clip_axis];
         div()
             .id("plane-toggle")
             .debug_selector(|| "plane-toggle".to_string())
@@ -408,7 +487,8 @@ impl Viewer {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
-                    this.clip_enabled = !this.clip_enabled;
+                    let axis = this.clip_axis;
+                    this.plane_enabled[axis] = !this.plane_enabled[axis];
                     cx.notify();
                 }),
             )
@@ -420,7 +500,7 @@ impl Viewer {
         label: &'static str,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let active = self.clip_enabled && self.clip_axis == axis;
+        let active = self.plane_enabled[axis];
         div()
             .id(match axis {
                 0 => "plane-axis-x",
@@ -441,10 +521,15 @@ impl Viewer {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, _, cx| {
+                    if this.clip_axis == axis && this.plane_enabled[axis] {
+                        this.plane_enabled[axis] = false;
+                    } else {
+                        this.plane_enabled[axis] = true;
+                    }
                     this.clip_axis = axis;
-                    this.clip_enabled = true;
                     let (min, max) = this.axis_extent();
-                    this.clip_offset = this.clip_offset.clamp(min, max);
+                    let offset = &mut this.plane_offset[axis];
+                    *offset = (*offset).clamp(min, max);
                     cx.notify();
                 }),
             )
@@ -478,8 +563,66 @@ impl Viewer {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, _, cx| {
-                    this.clip_enabled = true;
+                    this.plane_enabled[this.clip_axis] = true;
                     this.step_plane(direction);
+                    cx.notify();
+                }),
+            )
+    }
+
+    fn box_toggle_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let active = self.box_enabled;
+        div()
+            .id("box-toggle")
+            .debug_selector(|| "box-toggle".to_string())
+            .px_3()
+            .py_1()
+            .rounded_md()
+            .bg(if active { rgb(0x2f6fed) } else { rgb(0x2a2e37) })
+            .cursor_pointer()
+            .child(if active { "Box on" } else { "Box off" })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.box_enabled = !this.box_enabled;
+                    if this.box_enabled && this.box_inset == 0.0 {
+                        this.box_inset = 0.15;
+                    }
+                    cx.notify();
+                }),
+            )
+    }
+
+    fn box_step_button(
+        &self,
+        label: &'static str,
+        direction: f64,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id(if direction < 0.0 {
+                "box-step-minus"
+            } else {
+                "box-step-plus"
+            })
+            .debug_selector(move || {
+                if direction < 0.0 {
+                    "box-step-minus".to_string()
+                } else {
+                    "box-step-plus".to_string()
+                }
+            })
+            .px_3()
+            .py_1()
+            .rounded_md()
+            .bg(rgb(0x2a2e37))
+            .cursor_pointer()
+            .child(label)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
+                    this.box_enabled = true;
+                    this.box_inset = (this.box_inset + direction * 0.05).clamp(0.0, 0.45);
                     cx.notify();
                 }),
             )
@@ -850,6 +993,36 @@ mod interaction_tests {
             state(&probe).clip_offset < after_plus.clip_offset,
             "- step retreats"
         );
+
+        // All three axis planes are enabled simultaneously after the
+        // axis-button loop.
+        assert_eq!(state(&probe).planes_enabled, [true, true, true]);
+
+        // Clip box toggle and inset steps.
+        let frame_pre_box = cx.capture_screenshot(window).expect("pre-box capture");
+        let box_toggle = cx
+            .debug_bounds(window, "box-toggle")
+            .expect("window")
+            .expect("box toggle bounds")
+            .center();
+        click(&mut cx, window, box_toggle);
+        let boxed = state(&probe);
+        assert!(boxed.box_enabled, "box toggle enables the clip box");
+        assert!((boxed.box_inset - 0.15).abs() < 1e-9);
+        let box_plus = cx
+            .debug_bounds(window, "box-step-plus")
+            .expect("window")
+            .expect("box plus bounds")
+            .center();
+        click(&mut cx, window, box_plus);
+        assert!((state(&probe).box_inset - 0.20).abs() < 1e-9);
+        let frame_box = cx.capture_screenshot(window).expect("box capture");
+        assert!(
+            pixel_diff(&frame_pre_box, &frame_box) > 1_000,
+            "clip box changes the frame"
+        );
+        click(&mut cx, window, box_toggle);
+        assert!(!state(&probe).box_enabled, "box toggle disables");
 
         // Alt+drag moves the plane.
         let before = state(&probe);
