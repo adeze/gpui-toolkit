@@ -41,6 +41,8 @@ struct IsoBuilder<'a> {
     weights: Vec<Weights>,
     triangles: Vec<[u32; 3]>,
     edge_points: HashMap<(u32, u32), u32>,
+    /// Edge key per created point, for cross-builder merging.
+    point_edges: Vec<(u32, u32)>,
 }
 
 impl IsoBuilder<'_> {
@@ -67,6 +69,7 @@ impl IsoBuilder<'_> {
         self.positions.push(p);
         self.weights.push(vec![(a, 1.0 - t), (b, t)]);
         self.edge_points.insert(key, id);
+        self.point_edges.push(key);
         id
     }
 
@@ -136,6 +139,32 @@ pub fn isosurface(
             field: field_name.to_string(),
             reason: "isosurface requires a scalar field".into(),
         })?;
+    // March each volume cell in parallel with a local builder, then
+    // merge by edge key so the surface stays watertight and indexed
+    // exactly like the sequential result.
+    let volume_cells: Vec<usize> = (0..dataset.cell_count())
+        .filter(|&cell| dataset.cells.types[cell].is_volume())
+        .collect();
+    let locals = crate::parallel::parallel_ranges(volume_cells.len(), |range| {
+        let mut builder = IsoBuilder {
+            dataset,
+            scalars,
+            value,
+            positions: Vec::new(),
+            weights: Vec::new(),
+            triangles: Vec::new(),
+            edge_points: HashMap::new(),
+            point_edges: Vec::new(),
+        };
+        for index in range {
+            let cell = volume_cells[index];
+            let nodes = dataset.cells.cell(cell).unwrap_or(&[]);
+            for tet in tetrahedralize(dataset.cells.types[cell], nodes) {
+                builder.march_tet(tet);
+            }
+        }
+        builder
+    });
     let mut builder = IsoBuilder {
         dataset,
         scalars,
@@ -144,20 +173,34 @@ pub fn isosurface(
         weights: Vec::new(),
         triangles: Vec::new(),
         edge_points: HashMap::new(),
+        point_edges: Vec::new(),
     };
-    let mut any_volume = false;
-    for cell in 0..dataset.cell_count() {
-        let kind = dataset.cells.types[cell];
-        if !kind.is_volume() {
-            continue;
+    for local in locals {
+        let mut remap = vec![0u32; local.positions.len()];
+        for (local_id, (position, weights)) in
+            local.positions.iter().zip(local.weights.iter()).enumerate()
+        {
+            let key = local.point_edges[local_id];
+            let global = if let Some(id) = builder.edge_points.get(&key) {
+                *id
+            } else {
+                let id = builder.positions.len() as u32;
+                builder.positions.push(*position);
+                builder.weights.push(weights.clone());
+                builder.edge_points.insert(key, id);
+                id
+            };
+            remap[local_id] = global;
         }
-        any_volume = true;
-        let nodes = dataset.cells.cell(cell).unwrap_or(&[]);
-        for tet in tetrahedralize(kind, nodes) {
-            builder.march_tet(tet);
+        for tri in &local.triangles {
+            builder.triangles.push([
+                remap[tri[0] as usize],
+                remap[tri[1] as usize],
+                remap[tri[2] as usize],
+            ]);
         }
     }
-    if !any_volume {
+    if volume_cells.is_empty() {
         return Err(TransformError::Degenerate(
             "dataset holds no volume cells".into(),
         ));

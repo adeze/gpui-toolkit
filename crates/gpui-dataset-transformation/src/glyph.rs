@@ -136,74 +136,27 @@ pub fn solid_arrows(
             reason: "solid arrows require a 3-vector field".into(),
         })?;
     let stride = stride.max(1);
+    // Per-glyph geometry in parallel, merged in point order.
+    let glyphs = crate::parallel::parallel_map(dataset.point_count(), |i| {
+        if i % stride != 0 {
+            return None;
+        }
+        arrow_geometry(dataset.positions[i], vectors[i], scale, radius_fraction)
+    });
     let mut positions: Vec<[f64; 3]> = Vec::new();
     let mut magnitudes: Vec<f64> = Vec::new();
     let mut cells: Vec<(CellType, Vec<u32>)> = Vec::new();
-    for (i, (origin, v)) in dataset.positions.iter().zip(vectors.iter()).enumerate() {
-        if i % stride != 0 {
-            continue;
+    for glyph in glyphs.into_iter().flatten() {
+        let (local_positions, triangles, speed) = glyph;
+        let base = positions.len() as u32;
+        magnitudes.extend(std::iter::repeat_n(speed, local_positions.len()));
+        positions.extend(local_positions);
+        for tri in triangles {
+            cells.push((
+                CellType::Triangle,
+                vec![base + tri[0], base + tri[1], base + tri[2]],
+            ));
         }
-        let speed = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-        if speed == 0.0 || !speed.is_finite() {
-            continue;
-        }
-        let length = scale * speed;
-        let dir = [v[0] / speed, v[1] / speed, v[2] / speed];
-        let radius = radius_fraction.max(0.0) * length;
-        let head_base = length * (1.0 - HEAD_FRACTION);
-        let tip = [
-            origin[0] + dir[0] * length,
-            origin[1] + dir[1] * length,
-            origin[2] + dir[2] * length,
-        ];
-        let u = perpendicular(dir);
-        let w = [
-            dir[1] * u[2] - dir[2] * u[1],
-            dir[2] * u[0] - dir[0] * u[2],
-            dir[0] * u[1] - dir[1] * u[0],
-        ];
-        let ring = |centre: [f64; 3], r: f64, positions: &mut Vec<[f64; 3]>| -> Vec<u32> {
-            (0..ARROW_SIDES)
-                .map(|s| {
-                    let a = s as f64 / ARROW_SIDES as f64 * std::f64::consts::TAU;
-                    let offset = [
-                        (u[0] * a.cos() + w[0] * a.sin()) * r,
-                        (u[1] * a.cos() + w[1] * a.sin()) * r,
-                        (u[2] * a.cos() + w[2] * a.sin()) * r,
-                    ];
-                    let id = positions.len() as u32;
-                    positions.push([
-                        centre[0] + offset[0],
-                        centre[1] + offset[1],
-                        centre[2] + offset[2],
-                    ]);
-                    id
-                })
-                .collect()
-        };
-        let vertex_start = positions.len();
-        let shaft_base_centre = *origin;
-        let shaft_top_centre = [
-            origin[0] + dir[0] * head_base,
-            origin[1] + dir[1] * head_base,
-            origin[2] + dir[2] * head_base,
-        ];
-        let base = ring(shaft_base_centre, radius, &mut positions);
-        let top = ring(shaft_top_centre, radius, &mut positions);
-        let head = ring(shaft_top_centre, radius * 2.0, &mut positions);
-        let tip_id = positions.len() as u32;
-        positions.push(tip);
-        let n = ARROW_SIDES;
-        for s in 0..n {
-            let s2 = (s + 1) % n;
-            // Shaft side (two triangles).
-            cells.push((CellType::Triangle, vec![base[s], base[s2], top[s2]]));
-            cells.push((CellType::Triangle, vec![base[s], top[s2], top[s]]));
-            // Head side and head base fan.
-            cells.push((CellType::Triangle, vec![head[s], head[s2], tip_id]));
-            cells.push((CellType::Triangle, vec![top[s], head[s2], head[s]]));
-        }
-        magnitudes.extend(std::iter::repeat_n(speed, positions.len() - vertex_start));
     }
     let refs: Vec<(CellType, &[u32])> = cells.iter().map(|(t, n)| (*t, n.as_slice())).collect();
     Ok(DataSet::new(
@@ -249,31 +202,44 @@ pub fn tensor_glyphs(
         })?;
     let stride = stride.max(1);
     let sphere = unit_sphere();
-    let mut positions: Vec<[f64; 3]> = Vec::new();
-    let mut magnitudes: Vec<f64> = Vec::new();
-    let mut cells: Vec<(CellType, Vec<u32>)> = Vec::new();
-    for (i, (origin, t)) in dataset.positions.iter().zip(tensors.iter()).enumerate() {
-        if i % stride != 0 || !t.iter().all(|v| v.is_finite()) {
-            continue;
+    // Per-glyph ellipsoids in parallel, merged in point order.
+    let glyphs = crate::parallel::parallel_map(dataset.point_count(), |i| {
+        if i % stride != 0 {
+            return None;
         }
+        let t = tensors[i];
+        if !t.iter().all(|v| v.is_finite()) {
+            return None;
+        }
+        let origin = dataset.positions[i];
         // Field order is xx, yy, zz, xy, yz, xz.
         let matrix = [[t[0], t[3], t[5]], [t[3], t[1], t[4]], [t[5], t[4], t[2]]];
         let (eigenvalues, vectors) = crate::eigen::symmetric_eigen(matrix);
         let radii: [f64; 3] = eigenvalues.map(|v| scale * v.abs().sqrt());
         let largest = eigenvalues.iter().map(|v| v.abs()).fold(0.0, f64::max);
+        let positions: Vec<[f64; 3]> = sphere
+            .0
+            .iter()
+            .map(|dir| {
+                let mut p = origin;
+                for axis in 0..3 {
+                    let scaled = dir[axis] * radii[axis];
+                    p[0] += vectors[0][axis] * scaled;
+                    p[1] += vectors[1][axis] * scaled;
+                    p[2] += vectors[2][axis] * scaled;
+                }
+                p
+            })
+            .collect();
+        Some((positions, largest))
+    });
+    let mut positions: Vec<[f64; 3]> = Vec::new();
+    let mut magnitudes: Vec<f64> = Vec::new();
+    let mut cells: Vec<(CellType, Vec<u32>)> = Vec::new();
+    for (local_positions, largest) in glyphs.into_iter().flatten() {
         let base = positions.len() as u32;
-        for dir in &sphere.0 {
-            // p = origin + sum_i dir_i * radius_i * eigenvector_i.
-            let mut p = *origin;
-            for axis in 0..3 {
-                let scaled = dir[axis] * radii[axis];
-                p[0] += vectors[0][axis] * scaled;
-                p[1] += vectors[1][axis] * scaled;
-                p[2] += vectors[2][axis] * scaled;
-            }
-            positions.push(p);
-            magnitudes.push(largest);
-        }
+        magnitudes.extend(std::iter::repeat_n(largest, local_positions.len()));
+        positions.extend(local_positions);
         for tri in &sphere.1 {
             cells.push((
                 CellType::Triangle,
@@ -320,6 +286,74 @@ fn unit_sphere() -> (Vec<[f64; 3]>, Vec<[u32; 3]>) {
         }
     }
     (vertices, triangles)
+}
+
+/// One solid arrow: (positions, triangles, speed); `None` for zero or
+/// non-finite vectors.
+fn arrow_geometry(
+    origin: [f64; 3],
+    v: [f64; 3],
+    scale: f64,
+    radius_fraction: f64,
+) -> Option<(Vec<[f64; 3]>, Vec<[u32; 3]>, f64)> {
+    let speed = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    if speed == 0.0 || !speed.is_finite() {
+        return None;
+    }
+    let length = scale * speed;
+    let dir = [v[0] / speed, v[1] / speed, v[2] / speed];
+    let radius = radius_fraction.max(0.0) * length;
+    let head_base = length * (1.0 - HEAD_FRACTION);
+    let tip = [
+        origin[0] + dir[0] * length,
+        origin[1] + dir[1] * length,
+        origin[2] + dir[2] * length,
+    ];
+    let u = perpendicular(dir);
+    let w = [
+        dir[1] * u[2] - dir[2] * u[1],
+        dir[2] * u[0] - dir[0] * u[2],
+        dir[0] * u[1] - dir[1] * u[0],
+    ];
+    let mut positions: Vec<[f64; 3]> = Vec::with_capacity(19);
+    let ring = |centre: [f64; 3], r: f64, positions: &mut Vec<[f64; 3]>| -> Vec<u32> {
+        (0..ARROW_SIDES)
+            .map(|s| {
+                let a = s as f64 / ARROW_SIDES as f64 * std::f64::consts::TAU;
+                let offset = [
+                    (u[0] * a.cos() + w[0] * a.sin()) * r,
+                    (u[1] * a.cos() + w[1] * a.sin()) * r,
+                    (u[2] * a.cos() + w[2] * a.sin()) * r,
+                ];
+                let id = positions.len() as u32;
+                positions.push([
+                    centre[0] + offset[0],
+                    centre[1] + offset[1],
+                    centre[2] + offset[2],
+                ]);
+                id
+            })
+            .collect()
+    };
+    let shaft_top_centre = [
+        origin[0] + dir[0] * head_base,
+        origin[1] + dir[1] * head_base,
+        origin[2] + dir[2] * head_base,
+    ];
+    let base = ring(origin, radius, &mut positions);
+    let top = ring(shaft_top_centre, radius, &mut positions);
+    let head = ring(shaft_top_centre, radius * 2.0, &mut positions);
+    let tip_id = positions.len() as u32;
+    positions.push(tip);
+    let mut triangles: Vec<[u32; 3]> = Vec::with_capacity(24);
+    for s in 0..ARROW_SIDES {
+        let s2 = (s + 1) % ARROW_SIDES;
+        triangles.push([base[s], base[s2], top[s2]]);
+        triangles.push([base[s], top[s2], top[s]]);
+        triangles.push([head[s], head[s2], tip_id]);
+        triangles.push([top[s], head[s2], head[s]]);
+    }
+    Some((positions, triangles, speed))
 }
 
 fn perpendicular(dir: [f64; 3]) -> [f64; 3] {

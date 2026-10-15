@@ -51,36 +51,33 @@ pub fn lic(
             "dataset holds no volume cells".into(),
         ));
     }
-    let values: Vec<f64> = dataset
-        .positions
-        .iter()
-        .map(|&origin| {
-            let mut sum = noise(origin, step, seed);
-            let mut count = 1.0;
-            for direction in [1.0, -1.0] {
-                let mut p = origin;
-                for _ in 0..kernel_steps {
-                    let Some(v) = tracer.velocity(p) else { break };
-                    let speed = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-                    if speed < 1e-300 {
-                        break;
-                    }
-                    let next = [
-                        p[0] + direction * step * v[0] / speed,
-                        p[1] + direction * step * v[1] / speed,
-                        p[2] + direction * step * v[2] / speed,
-                    ];
-                    if tracer.velocity(next).is_none() {
-                        break;
-                    }
-                    p = next;
-                    sum += noise(p, step, seed);
-                    count += 1.0;
+    let values: Vec<f64> = crate::parallel::parallel_map(dataset.point_count(), |index| {
+        let origin = dataset.positions[index];
+        let mut sum = noise(origin, step, seed);
+        let mut count = 1.0;
+        for direction in [1.0, -1.0] {
+            let mut p = origin;
+            for _ in 0..kernel_steps {
+                let Some(v) = tracer.velocity(p) else { break };
+                let speed = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+                if speed < 1e-300 {
+                    break;
                 }
+                let next = [
+                    p[0] + direction * step * v[0] / speed,
+                    p[1] + direction * step * v[1] / speed,
+                    p[2] + direction * step * v[2] / speed,
+                ];
+                if tracer.velocity(next).is_none() {
+                    break;
+                }
+                p = next;
+                sum += noise(p, step, seed);
+                count += 1.0;
             }
-            sum / count
-        })
-        .collect();
+        }
+        sum / count
+    });
     let mut result = dataset.clone();
     result.point_data.retain(|f| f.name.as_ref() != "lic");
     result.point_data.push(Field::scalar("lic", values));

@@ -15,6 +15,8 @@ pub mod animate;
 pub mod camera;
 #[cfg(feature = "gpui")]
 pub mod element;
+#[cfg(feature = "gpu")]
+pub mod gpu_render;
 pub mod legend;
 pub mod movie;
 pub mod prepare;
@@ -26,6 +28,8 @@ pub mod volume;
 
 pub use animate::Player;
 pub use camera::{Camera, Projection};
+#[cfg(feature = "gpu")]
+pub use gpu_render::{GpuRenderError, GpuRenderer, GpuScene, GpuTarget};
 pub use legend::{
     Annotation, ColorBar, ColorBarLayout, Rect, draw_axis_triad, draw_colorbar, layout_colorbar,
     nice_ticks,

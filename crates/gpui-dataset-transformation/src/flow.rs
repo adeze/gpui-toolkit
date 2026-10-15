@@ -57,70 +57,35 @@ fn solve3(m: [[f64; 3]; 3], rhs: [f64; 3]) -> Option<[f64; 3]> {
 /// Returns `(jacobian, volume)` per point; volume is the accumulated
 /// element weight and is zero for points outside every volume cell.
 fn point_jacobian(dataset: &DataSet, vectors: &[[f64; 3]]) -> Vec<([[f64; 3]; 3], f64)> {
-    let mut acc = vec![([[0.0; 3]; 3], 0.0f64); dataset.point_count()];
+    // Gather every tetrahedron first; per-tet gradients are computed in
+    // parallel, then accumulated sequentially in cell order so results
+    // are bit-identical to the sequential version.
+    let mut tets: Vec<[u32; 4]> = Vec::new();
     for cell in 0..dataset.cell_count() {
         let kind = dataset.cells.types[cell];
         if !kind.is_volume() {
             continue;
         }
         let nodes = dataset.cells.cell(cell).unwrap_or(&[]);
-        for tet in tetrahedralize(kind, nodes) {
-            let p = [
-                dataset.positions[tet[0] as usize],
-                dataset.positions[tet[1] as usize],
-                dataset.positions[tet[2] as usize],
-                dataset.positions[tet[3] as usize],
-            ];
-            // Edge matrix columns are p_i - p_0; its determinant is 6*volume.
-            let m = [
-                [p[1][0] - p[0][0], p[2][0] - p[0][0], p[3][0] - p[0][0]],
-                [p[1][1] - p[0][1], p[2][1] - p[0][1], p[3][1] - p[0][1]],
-                [p[1][2] - p[0][2], p[2][2] - p[0][2], p[3][2] - p[0][2]],
-            ];
-            let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
-                - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
-                + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
-            let volume = det.abs() / 6.0;
-            if volume < 1e-300 {
-                continue;
-            }
-            // Gradient of each component: solve m^T g = dv (m rows are axes).
-            let mut jac = [[0.0; 3]; 3];
-            let mut valid = true;
-            for component in 0..3 {
-                let v0 = vectors[tet[0] as usize][component];
-                let dv = [
-                    vectors[tet[1] as usize][component] - v0,
-                    vectors[tet[2] as usize][component] - v0,
-                    vectors[tet[3] as usize][component] - v0,
-                ];
-                // m is stored [axis][edge]; gradient solves sum_e m[axis][e] * x_e = dv[axis]
-                // with x holding derivatives along edges, then g_axis = x combined
-                // through the transpose system: solve m^T * g = dv.
-                let mt = [
-                    [m[0][0], m[1][0], m[2][0]],
-                    [m[0][1], m[1][1], m[2][1]],
-                    [m[0][2], m[1][2], m[2][2]],
-                ];
-                if let Some(g) = solve3(mt, dv) {
-                    jac[component] = g;
-                } else {
-                    valid = false;
-                    break;
+        tets.extend(tetrahedralize(kind, nodes));
+    }
+    let gradients = crate::parallel::parallel_map(tets.len(), |index| {
+        let tet = tets[index];
+        tet_jacobian(dataset, vectors, tet)
+    });
+    let mut acc = vec![([[0.0; 3]; 3], 0.0f64); dataset.point_count()];
+    for (tet, gradient) in tets.iter().zip(gradients.iter()) {
+        let Some((jac, volume)) = gradient else {
+            continue;
+        };
+        for &node in tet {
+            let entry = &mut acc[node as usize];
+            for (component, row) in jac.iter().enumerate() {
+                for (axis, value) in row.iter().enumerate() {
+                    entry.0[component][axis] += value * volume;
                 }
             }
-            if !valid {
-                continue;
-            }
-            for &node in &tet {
-                let entry = &mut acc[node as usize];
-                for (component, row) in jac.iter().enumerate() {
-                    for (axis, value) in row.iter().enumerate() {
-                        entry.0[component][axis] += value * volume;
-                    }
-                }
-                entry.1 += volume;
-            }
+            entry.1 += volume;
         }
     }
     for (jac, volume) in &mut acc {
@@ -133,6 +98,49 @@ fn point_jacobian(dataset: &DataSet, vectors: &[[f64; 3]]) -> Vec<([[f64; 3]; 3]
         }
     }
     acc
+}
+
+/// Gradient and volume of one tetrahedron; `None` when degenerate.
+fn tet_jacobian(
+    dataset: &DataSet,
+    vectors: &[[f64; 3]],
+    tet: [u32; 4],
+) -> Option<([[f64; 3]; 3], f64)> {
+    let p = [
+        dataset.positions[tet[0] as usize],
+        dataset.positions[tet[1] as usize],
+        dataset.positions[tet[2] as usize],
+        dataset.positions[tet[3] as usize],
+    ];
+    // Edge matrix columns are p_i - p_0; its determinant is 6*volume.
+    let m = [
+        [p[1][0] - p[0][0], p[2][0] - p[0][0], p[3][0] - p[0][0]],
+        [p[1][1] - p[0][1], p[2][1] - p[0][1], p[3][1] - p[0][1]],
+        [p[1][2] - p[0][2], p[2][2] - p[0][2], p[3][2] - p[0][2]],
+    ];
+    let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+        - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+        + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+    let volume = det.abs() / 6.0;
+    if volume < 1e-300 {
+        return None;
+    }
+    let mt = [
+        [m[0][0], m[1][0], m[2][0]],
+        [m[0][1], m[1][1], m[2][1]],
+        [m[0][2], m[1][2], m[2][2]],
+    ];
+    let mut jac = [[0.0; 3]; 3];
+    for component in 0..3 {
+        let v0 = vectors[tet[0] as usize][component];
+        let dv = [
+            vectors[tet[1] as usize][component] - v0,
+            vectors[tet[2] as usize][component] - v0,
+            vectors[tet[3] as usize][component] - v0,
+        ];
+        jac[component] = solve3(mt, dv)?;
+    }
+    Some((jac, volume))
 }
 
 fn velocity_field<'a>(

@@ -27,7 +27,12 @@ software frames; scenes also carry text `Annotation`s for GPUI hosts.
 `TransferFunction::banded` quantises a ramp for filled contours.
 Examples: `pcfan_airflow`, `speaker_port`, `necking_bar`,
 `interactive_viewer`, and `flow_showcase` (Taylor-Green vortex exercising
-arrows, tubes, LIC, contours, tensor glyphs, particles, legend). Enable the `png`
+arrows, tubes, LIC, contours, tensor glyphs, particles, legend). The
+`gpu` feature adds `GpuRenderer`: scenes upload their geometry and LUTs
+once and then draw by rewriting only the 288-byte per-actor uniform
+block, so frames never read geometry back to the CPU (Metal on Apple
+Silicon, Vulkan/CUDA-class adapters elsewhere, WebGPU in the browser);
+`gpu_render` is the matching example with a QA readback. Enable the `png`
 feature for PNG frame export, and `mp4` (native only) to mux frames to
 H.264 MP4 through the system `ffmpeg`.
 

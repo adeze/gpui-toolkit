@@ -15,7 +15,19 @@ extrusions), `dashed_lines` (animated marching-ants dashes), and
 `swirling_strength`) use per-tetrahedron gradients averaged to points;
 vortex cores are `isosurface(lambda2, 0)`. `lic` appends a
 line-integral-convolution streak field, and `particle_frames` advects
-seeded particles through a `TimeSeries` with fading trails; the `gpu` feature runs the same diagnostics through wgpu compute
+seeded particles through a `TimeSeries` with fading trails;
+`streak_frames` releases particles continuously (dye lines), `ftle`
+computes finite-time Lyapunov exponents, `streamlines_adaptive` traces
+with step-doubling error control, and `hyperstreamlines` follows a
+tensor field's major axis. Data plumbing: `point_data_to_cell_data` /
+`cell_data_to_point_data`, `surface_normals`, `feature_edges`,
+`decimate` (vertex clustering), `smooth` (Laplacian), `clip_sphere`,
+`append_datasets`, `transform_dataset`, an expression `calculator`,
+`resample_to_grid`, `field_statistics` / `histogram`, and point-set
+`delaunay_2d` / `convex_hull`. Heavy filters (isosurface, flow
+diagnostics, LIC, contours, glyphs) run index-parallel on native
+targets with deterministic, order-preserving output; wasm stays
+sequential; the `gpu` feature runs the same diagnostics through wgpu compute
 (Metal on Apple Silicon, Vulkan/CUDA-class adapters elsewhere), with a
 prepared point-reduction kernel that is about 5x faster than the CPU at
 110k points in local benchmarks. I/O covers legacy VTK text, VTU XML with

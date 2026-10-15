@@ -11,8 +11,12 @@
 // Rust guideline compliant 2026-02-21
 
 use gpui_dataset_transformation::{
-    Plane, ThresholdMode, clip_halfspace, divergence, isosurface, lambda2, q_criterion, slice,
-    streamlines, swirling_strength, threshold, vector_magnitude, vorticity, vorticity_magnitude,
+    ParticleOptions, Plane, ThresholdMode, append_datasets, calculator, cell_data_to_point_data,
+    clip_halfspace, clip_sphere, contour_lines, convex_hull, dashed_lines, decimate, delaunay_2d,
+    divergence, feature_edges, field_statistics, histogram, hyperstreamlines, isosurface, lambda2,
+    lic, particle_frames, point_data_to_cell_data, q_criterion, resample_to_grid, slice, smooth,
+    solid_arrows, stream_ribbons, streamlines, streamtubes, surface_normals, swirling_strength,
+    tensor_glyphs, threshold, transform_dataset, vector_magnitude, vorticity, vorticity_magnitude,
 };
 use gpui_mesh::{Association, DataSet, Field};
 use serde::Deserialize;
@@ -44,6 +48,7 @@ pub fn dataset_from_spec(spec: &Value) -> Result<DataSet, String> {
             let count = match field.kind.as_str() {
                 "scalar" => field.values.len(),
                 "vector" => field.vectors.as_ref().map_or(0, Vec::len),
+                "tensor" => field.tensors.as_ref().map_or(0, Vec::len),
                 other => return Err(format!("unknown field kind '{other}'")),
             };
             if count != points {
@@ -55,6 +60,7 @@ pub fn dataset_from_spec(spec: &Value) -> Result<DataSet, String> {
             let built = match field.kind.as_str() {
                 "scalar" => Field::scalar(field.name.clone(), field.values),
                 "vector" => Field::vector(field.name.clone(), field.vectors.unwrap_or_default()),
+                "tensor" => Field::tensor(field.name.clone(), field.tensors.unwrap_or_default()),
                 _ => unreachable!(),
             };
             dataset = dataset.with_field(built);
@@ -117,6 +123,150 @@ pub fn apply_op(dataset: &DataSet, op: &Value) -> Result<DataSet, String> {
         "lambda2" => lambda2(dataset, str_field(op, "field")?, "lambda2").map_err(err),
         "swirling_strength" => {
             swirling_strength(dataset, str_field(op, "field")?, "swirling_strength").map_err(err)
+        }
+        "solid_arrows" => solid_arrows(
+            dataset,
+            str_field(op, "field")?,
+            f64_field(op, "scale").unwrap_or(1.0),
+            usize_field(op, "stride").unwrap_or(1),
+            f64_field(op, "radius_fraction").unwrap_or(0.05),
+        )
+        .map_err(err),
+        "tensor_glyphs" => tensor_glyphs(
+            dataset,
+            str_field(op, "field")?,
+            f64_field(op, "scale").unwrap_or(1.0),
+            usize_field(op, "stride").unwrap_or(1),
+        )
+        .map_err(err),
+        "streamlines" => {
+            let seeds: Vec<[f64; 3]> =
+                serde_json::from_value(op.get("seeds").cloned().unwrap_or(Value::Null))
+                    .map_err(|e| format!("invalid 'seeds': {e}"))?;
+            streamlines(
+                dataset,
+                str_field(op, "field").unwrap_or("velocity"),
+                &seeds,
+                f64_field(op, "step").unwrap_or(0.05),
+                usize_field(op, "max_steps").unwrap_or(500),
+            )
+            .map_err(err)
+        }
+        "streamtubes" => streamtubes(
+            dataset,
+            f64_field(op, "radius")?,
+            usize_field(op, "sides").unwrap_or(6),
+        )
+        .map_err(err),
+        "stream_ribbons" => stream_ribbons(dataset, f64_field(op, "width")?).map_err(err),
+        "dashed_lines" => dashed_lines(
+            dataset,
+            f64_field(op, "phase").unwrap_or(0.0),
+            f64_field(op, "dash")?,
+            f64_field(op, "gap")?,
+        )
+        .map_err(err),
+        "contour_lines" => {
+            let levels: Vec<f64> =
+                serde_json::from_value(op.get("levels").cloned().unwrap_or(Value::Null))
+                    .map_err(|e| format!("invalid 'levels': {e}"))?;
+            contour_lines(dataset, str_field(op, "field")?, &levels).map_err(err)
+        }
+        "lic" => lic(
+            dataset,
+            str_field(op, "field").unwrap_or("velocity"),
+            usize_field(op, "kernel_steps").unwrap_or(10),
+            f64_field(op, "step")?,
+            usize_field(op, "seed").unwrap_or(0) as u64,
+        )
+        .map_err(err),
+        "point_to_cell" => point_data_to_cell_data(
+            dataset,
+            str_field(op, "field")?,
+            op.get("output")
+                .and_then(Value::as_str)
+                .unwrap_or("cell_value"),
+        )
+        .map_err(err),
+        "cell_to_point" => cell_data_to_point_data(
+            dataset,
+            str_field(op, "field")?,
+            op.get("output")
+                .and_then(Value::as_str)
+                .unwrap_or("point_value"),
+        )
+        .map_err(err),
+        "normals" => surface_normals(dataset).map_err(err),
+        "feature_edges" => {
+            feature_edges(dataset, f64_field(op, "angle").unwrap_or(30.0)).map_err(err)
+        }
+        "decimate" => decimate(dataset, f64_field(op, "cell_size")?).map_err(err),
+        "smooth" => smooth(
+            dataset,
+            f64_field(op, "lambda").unwrap_or(0.5),
+            usize_field(op, "iterations").unwrap_or(1),
+        )
+        .map_err(err),
+        "clip_sphere" => {
+            let mode = match op.get("mode").and_then(Value::as_str).unwrap_or("all") {
+                "all" => ThresholdMode::All,
+                "any" => ThresholdMode::Any,
+                other => return Err(format!("unknown clip_sphere mode '{other}'")),
+            };
+            clip_sphere(
+                dataset,
+                vec3(op, "centre")?,
+                f64_field(op, "radius")?,
+                op.get("keep_inside")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
+                mode,
+            )
+            .map_err(err)
+        }
+        "calculator" => calculator(
+            dataset,
+            str_field(op, "expression")?,
+            op.get("output").and_then(Value::as_str).unwrap_or("result"),
+        )
+        .map_err(err),
+        "resample" => {
+            let dims: [usize; 3] =
+                serde_json::from_value(op.get("dims").cloned().unwrap_or(Value::Null))
+                    .map_err(|e| format!("invalid 'dims': {e}"))?;
+            resample_to_grid(
+                dataset,
+                dims,
+                vec3(op, "origin").unwrap_or([0.0; 3]),
+                vec3(op, "spacing").unwrap_or([1.0; 3]),
+                f64_field(op, "fill").unwrap_or(0.0),
+            )
+            .map_err(err)
+        }
+        "hyperstreamlines" => {
+            let seeds: Vec<[f64; 3]> =
+                serde_json::from_value(op.get("seeds").cloned().unwrap_or(Value::Null))
+                    .map_err(|e| format!("invalid 'seeds': {e}"))?;
+            hyperstreamlines(
+                dataset,
+                str_field(op, "field")?,
+                &seeds,
+                f64_field(op, "step").unwrap_or(0.05),
+                usize_field(op, "max_steps").unwrap_or(500),
+            )
+            .map_err(err)
+        }
+        "delaunay" => delaunay_2d(&dataset.positions).map_err(err),
+        "convex_hull" => convex_hull(&dataset.positions).map_err(err),
+        "transform" => {
+            let matrix: [[f64; 4]; 3] =
+                serde_json::from_value(op.get("matrix").cloned().unwrap_or(Value::Null))
+                    .map_err(|e| format!("invalid 'matrix': {e}"))?;
+            transform_dataset(dataset, matrix).map_err(err)
+        }
+        "append" => {
+            let other = dataset_from_spec(op.get("dataset").unwrap_or(&Value::Null))?;
+            append_datasets(dataset, &other).map_err(err)
         }
         "magnitude" => {
             let out = op
@@ -201,6 +351,200 @@ pub fn mesh_streamlines(request_json: &str) -> Result<String, String> {
     Ok(serde_json::to_string(&json!({ "lines": polylines })).unwrap_or_default())
 }
 
+fn usize_field(op: &Value, key: &str) -> Option<usize> {
+    op.get(key).and_then(Value::as_u64).map(|v| v as usize)
+}
+
+/// Runs the full request and returns the final dataset's full geometry:
+/// points, typed cells, convenience triangle/line index lists, and fields.
+///
+/// # Errors
+///
+/// Returns a message for malformed JSON or any failing op.
+pub fn mesh_geometry(request_json: &str) -> Result<String, String> {
+    let request: Value = serde_json::from_str(request_json).map_err(|e| e.to_string())?;
+    let mut dataset = dataset_from_spec(request.get("dataset").unwrap_or(&Value::Null))?;
+    if let Some(ops) = request.get("ops").and_then(Value::as_array) {
+        for op in ops {
+            dataset = apply_op(&dataset, op)?;
+        }
+    }
+    Ok(serde_json::to_string(&dataset_geometry(&dataset)).unwrap_or_default())
+}
+
+/// Advects particles and returns one geometry object per frame.
+///
+/// The request is `{"series": [dataset, ...], "times": [...], ...}` plus
+/// the scalar options of [`particle_frames`]; series datasets are built
+/// with the same spec format as `dataset`.
+///
+/// # Errors
+///
+/// Returns a message for malformed JSON or advection failures.
+pub fn mesh_particles(request_json: &str) -> Result<String, String> {
+    let request: Value = serde_json::from_str(request_json).map_err(|e| e.to_string())?;
+    let specs = request
+        .get("series")
+        .and_then(Value::as_array)
+        .ok_or("request is missing 'series'")?;
+    let mut steps = Vec::with_capacity(specs.len());
+    for spec in specs {
+        steps.push(dataset_from_spec(spec)?);
+    }
+    let times: Vec<f64> =
+        serde_json::from_value(request.get("times").cloned().unwrap_or(Value::Null))
+            .map_err(|e| format!("invalid 'times': {e}"))?;
+    let series = gpui_mesh::TimeSeries::new(steps, times).map_err(|e| e.to_string())?;
+    let field = request
+        .get("velocity_field")
+        .and_then(Value::as_str)
+        .unwrap_or("velocity");
+    let seeds: Vec<[f64; 3]> =
+        serde_json::from_value(request.get("seeds").cloned().unwrap_or(Value::Null))
+            .map_err(|e| format!("invalid 'seeds': {e}"))?;
+    let options = ParticleOptions {
+        dt: request
+            .get("dt")
+            .and_then(Value::as_f64)
+            .unwrap_or(1.0 / 24.0),
+        frames: usize_field(&request, "frames").unwrap_or(120),
+        trail: usize_field(&request, "trail").unwrap_or(24),
+    };
+    let frames = particle_frames(&series, field, &seeds, options).map_err(|e| e.to_string())?;
+    let geometries: Vec<Value> = frames.iter().map(dataset_geometry).collect();
+    Ok(serde_json::to_string(&json!({ "frames": geometries })).unwrap_or_default())
+}
+
+/// Serialises a dataset: points, typed cells, triangle/line index lists,
+/// and point fields (scalar, vector, tensor values as nested arrays).
+fn dataset_geometry(dataset: &DataSet) -> Value {
+    let mut triangles: Vec<u32> = Vec::new();
+    let mut lines: Vec<u32> = Vec::new();
+    let mut cells: Vec<Value> = Vec::new();
+    for cell in 0..dataset.cell_count() {
+        let kind = dataset.cells.types[cell];
+        let nodes = dataset.cells.cell(cell).unwrap_or(&[]);
+        let name = match kind {
+            gpui_mesh::CellType::Vertex => "vertex",
+            gpui_mesh::CellType::Line => "line",
+            gpui_mesh::CellType::Triangle => "triangle",
+            gpui_mesh::CellType::Quad => "quad",
+            gpui_mesh::CellType::Tetra => "tetra",
+            gpui_mesh::CellType::Hexahedron => "hexahedron",
+            gpui_mesh::CellType::Wedge => "wedge",
+            gpui_mesh::CellType::Pyramid => "pyramid",
+        };
+        cells.push(json!({ "type": name, "nodes": nodes }));
+        match kind {
+            gpui_mesh::CellType::Triangle => triangles.extend_from_slice(nodes),
+            gpui_mesh::CellType::Line => lines.extend_from_slice(nodes),
+            _ => {}
+        }
+    }
+    let mut fields = serde_json::Map::new();
+    for field in dataset.point_data.iter().chain(dataset.cell_data.iter()) {
+        let value = match &field.data {
+            gpui_mesh::FieldData::Scalar(values) => {
+                json!({ "kind": "scalar", "values": values.as_ref() })
+            }
+            gpui_mesh::FieldData::Vector(values) => {
+                json!({ "kind": "vector", "values": values.as_ref() })
+            }
+            gpui_mesh::FieldData::Tensor(values) => {
+                json!({ "kind": "tensor", "values": values.as_ref() })
+            }
+            gpui_mesh::FieldData::Complex(values) => {
+                json!({ "kind": "complex", "values": values.as_ref() })
+            }
+        };
+        fields.insert(field.name.to_string(), value);
+    }
+    json!({
+        "points": dataset.positions.as_ref(),
+        "cells": cells,
+        "triangles": triangles,
+        "lines": lines,
+        "fields": Value::Object(fields),
+    })
+}
+
+/// Field statistics (and optional histogram) for one field.
+///
+/// # Errors
+///
+/// Returns a message for malformed JSON or a missing field.
+pub fn mesh_statistics(request_json: &str) -> Result<String, String> {
+    let request: Value = serde_json::from_str(request_json).map_err(|e| e.to_string())?;
+    let dataset = dataset_from_spec(request.get("dataset").unwrap_or(&Value::Null))?;
+    let field = request
+        .get("field")
+        .and_then(Value::as_str)
+        .ok_or("request is missing 'field'")?;
+    let association = match request.get("association").and_then(Value::as_str) {
+        Some("cell") => Association::Cell,
+        _ => Association::Point,
+    };
+    let stats = field_statistics(&dataset, field, association).map_err(|e| e.to_string())?;
+    let mut out = json!({
+        "count": stats.count,
+        "min": stats.min,
+        "max": stats.max,
+        "mean": stats.mean,
+        "std_dev": stats.std_dev,
+        "median": stats.median,
+    });
+    if let Some(bins) = request.get("bins").and_then(Value::as_u64) {
+        let hist = histogram(&dataset, field, bins as usize).map_err(|e| e.to_string())?;
+        out["histogram"] = json!(
+            hist.iter()
+                .map(|(centre, count)| json!({"centre": centre, "count": count}))
+                .collect::<Vec<_>>()
+        );
+    }
+    Ok(serde_json::to_string(&out).unwrap_or_default())
+}
+
+/// FTLE field of a time series at `t0` over `duration`, as a summary.
+///
+/// # Errors
+///
+/// Returns a message for malformed JSON or computation failures.
+pub fn mesh_ftle(request_json: &str) -> Result<String, String> {
+    let request: Value = serde_json::from_str(request_json).map_err(|e| e.to_string())?;
+    let specs = request
+        .get("series")
+        .and_then(Value::as_array)
+        .ok_or("request is missing 'series'")?;
+    let mut steps = Vec::with_capacity(specs.len());
+    for spec in specs {
+        steps.push(dataset_from_spec(spec)?);
+    }
+    let times: Vec<f64> =
+        serde_json::from_value(request.get("times").cloned().unwrap_or(Value::Null))
+            .map_err(|e| format!("invalid 'times': {e}"))?;
+    let series = gpui_mesh::TimeSeries::new(steps, times).map_err(|e| e.to_string())?;
+    let field = request
+        .get("velocity_field")
+        .and_then(Value::as_str)
+        .unwrap_or("velocity");
+    let out = gpui_dataset_transformation::ftle(
+        &series,
+        field,
+        request.get("t0").and_then(Value::as_f64).unwrap_or(0.0),
+        request
+            .get("duration")
+            .and_then(Value::as_f64)
+            .unwrap_or(1.0),
+        request
+            .get("epsilon")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.05),
+        usize_field(&request, "steps").unwrap_or(16),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(serde_json::to_string(&summarize(&out)).unwrap_or_default())
+}
+
 fn summarize(dataset: &DataSet) -> Value {
     let fields: Vec<Value> = dataset
         .point_data
@@ -265,6 +609,7 @@ struct FieldSpec {
     #[serde(default)]
     values: Vec<f64>,
     vectors: Option<Vec<[f64; 3]>>,
+    tensors: Option<Vec<[f64; 6]>>,
 }
 
 fn vec3(op: &Value, key: &str) -> Result<[f64; 3], String> {
@@ -360,6 +705,46 @@ mod tests {
         // One seed traces both directions, yielding two polylines.
         assert_eq!(lines["lines"].as_array().unwrap().len(), 2);
         assert!(lines["lines"][0].as_array().unwrap().len() > 10);
+    }
+
+    #[test]
+    fn geometry_ops_return_triangles_and_particles_advance() {
+        let mut request: Value = serde_json::from_str(&rotation_request()).unwrap();
+        request["ops"] = json!([
+            {"op": "slice", "normal": [0, 0, 1], "point": [0, 0, 0.5]},
+            {"op": "solid_arrows", "field": "velocity", "scale": 0.4, "stride": 4, "radius_fraction": 0.05},
+        ]);
+        let out = mesh_geometry(&request.to_string()).unwrap();
+        let geometry: Value = serde_json::from_str(&out).unwrap();
+        // Each solid arrow contributes 24 triangles (72 indices).
+        let indices = geometry["triangles"].as_array().unwrap().len();
+        assert!(indices > 0 && indices % 72 == 0, "indices {indices}");
+        assert!(geometry["fields"]["magnitude"].is_object());
+
+        let mut request: Value = serde_json::from_str(&rotation_request()).unwrap();
+        request["ops"] = json!([
+            {"op": "streamlines", "field": "velocity", "seeds": [[0.5, 0.1, 0.5]], "step": 0.05, "max_steps": 30},
+            {"op": "streamtubes", "radius": 0.02, "sides": 4},
+        ]);
+        let out = mesh_geometry(&request.to_string()).unwrap();
+        let geometry: Value = serde_json::from_str(&out).unwrap();
+        assert!(!geometry["triangles"].as_array().unwrap().is_empty());
+
+        let series_request = json!({
+            "series": [request["dataset"], request["dataset"]],
+            "times": [0.0, 10.0],
+            "velocity_field": "velocity",
+            "seeds": [[0.5, 0.1, 0.5]],
+            "dt": 0.1,
+            "frames": 3,
+            "trail": 5,
+        });
+        let out = mesh_particles(&series_request.to_string()).unwrap();
+        let frames: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(frames["frames"].as_array().unwrap().len(), 3);
+        let last = &frames["frames"][2];
+        assert!(last["fields"]["age"].is_object());
+        assert!(!last["lines"].as_array().unwrap().is_empty());
     }
 
     #[test]

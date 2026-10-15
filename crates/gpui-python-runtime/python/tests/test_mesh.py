@@ -56,6 +56,35 @@ class MeshTests(unittest.TestCase):
         self.assertEqual(len(lines), 2)  # both directions per seed
         self.assertGreater(len(lines[0]), 10)
 
+    def test_geometry_ops(self):
+        arrows = mesh.geometry(
+            _rotation_dataset(),
+            [mesh.slice_(normal=(0, 0, 1), point=(0, 0, 0.5)),
+             mesh.arrows(scale=0.4, stride=4)],
+        )
+        self.assertGreater(len(arrows["triangles"]), 0)
+        self.assertEqual(len(arrows["triangles"]) % 72, 0)
+        self.assertIn("magnitude", arrows["fields"])
+
+        tubes = mesh.geometry(
+            _rotation_dataset(),
+            [mesh.streamline_op([(0.5, 0.1, 0.5)], step=0.05, max_steps=30),
+             mesh.tubes(radius=0.02, sides=4)],
+        )
+        self.assertGreater(len(tubes["triangles"]), 0)
+
+        frames = mesh.particles(
+            [_rotation_dataset(), _rotation_dataset()],
+            [0.0, 10.0],
+            [(0.5, 0.1, 0.5)],
+            dt=0.1,
+            frames=3,
+            trail=5,
+        )
+        self.assertEqual(len(frames), 3)
+        self.assertIn("age", frames[2]["fields"])
+        self.assertGreater(len(frames[2]["lines"]), 0)
+
     def test_errors_are_reported(self):
         with self.assertRaises(ValueError):
             mesh.run(_rotation_dataset(), [{"op": "explode"}])
@@ -71,6 +100,11 @@ class MeshSpecTests(unittest.TestCase):
         self.assertEqual(len(spec["fields"]), 2)
         op = mesh.clip(normal=(1, 0, 0), keep="negative")
         self.assertEqual(op["op"], "clip")
+        self.assertEqual(mesh.tubes(radius=0.1)["op"], "streamtubes")
+        tensor_spec = mesh.structured(
+            [2, 2, 2], tensors={"s": [[1, 0, 0, 0, 0, 0]] * 8}
+        )
+        self.assertEqual(tensor_spec["fields"][0]["kind"], "tensor")
 
 
 if __name__ == "__main__":

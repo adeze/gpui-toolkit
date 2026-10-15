@@ -2880,13 +2880,16 @@ dependencies = [
 name = "gpui-scene3d"
 version = "0.10.44"
 dependencies = [
+ "bytemuck",
  "criterion",
  "gpui-dataset-transformation",
  "gpui-mesh",
  "gpui-miniapp",
  "image",
+ "pollster",
  "sotf-gpui-toolkit-gpui",
  "sotf-gpui-toolkit-gpui-macos",
+ "sotf-wgpu",
  "thiserror 2.0.21",
 ]
 

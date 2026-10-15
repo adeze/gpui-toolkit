@@ -27,6 +27,9 @@ gpui = ["dep:gpui", "dep:image"]
 # Native only: wasm hosts download the PNG sequence instead. The encoder is
 # located at runtime, so builds never depend on it.
 mp4 = ["png"]
+# GPU-resident surface rendering through wgpu (Metal on Apple Silicon,
+# Vulkan/CUDA-class adapters elsewhere, WebGPU in the browser).
+gpu = ["dep:wgpu", "dep:bytemuck", "dep:pollster"]
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
@@ -39,6 +42,9 @@ gpui = { workspace = true, optional = true }
 gpui-mesh = { workspace = true }
 image = { workspace = true, optional = true }
 thiserror = { workspace = true }
+wgpu = { workspace = true, optional = true }
+bytemuck = { workspace = true, optional = true }
+pollster = { workspace = true, optional = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 criterion = { workspace = true }
@@ -61,6 +67,11 @@ required-features = ["png", "mp4"]
 name = "necking_bar"
 path = "examples/necking_bar.rs"
 required-features = ["png", "mp4"]
+
+[[example]]
+name = "gpu_render"
+path = "examples/gpu_render.rs"
+required-features = ["gpu", "png"]
 
 [[example]]
 name = "flow_showcase"

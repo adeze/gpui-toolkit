@@ -2,6 +2,20 @@
 
 ## Added
 
+- Missing-filter wave: point/cell data conversion, `surface_normals`,
+  `feature_edges`, `decimate`, `smooth`, `clip_sphere`,
+  `append_datasets`, `transform_dataset`, expression `calculator`,
+  `resample_to_grid`, `field_statistics` / `histogram`, `delaunay_2d`,
+  `convex_hull`, `streamlines_adaptive` (step-doubling RK2),
+  `streak_frames`, `ftle`, and `hyperstreamlines`.
+- Heavy filters (isosurface, flow diagnostics, LIC, contours, solid
+  arrows, tensor glyphs) now evaluate index-parallel on native targets
+  via scoped threads with order-preserving, bit-identical output
+  (vorticity and isosurface benchmarks improve ~30-40% at 24^3); wasm
+  builds run the same code sequentially.
+
+## Added
+
 - `solid_arrows`: closed 3D shaft+cone arrow glyphs coloured by a
   `magnitude` field; `tensor_glyphs`: ellipsoid glyphs from the
   eigendecomposition of a symmetric-tensor field.

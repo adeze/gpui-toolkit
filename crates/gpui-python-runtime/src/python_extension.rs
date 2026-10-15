@@ -9035,6 +9035,26 @@ fn mesh_streamlines(request_json: &str) -> PyResult<String> {
 }
 
 #[pyfunction]
+fn mesh_geometry(request_json: &str) -> PyResult<String> {
+    crate::mesh_api::mesh_geometry(request_json).map_err(PyValueError::new_err)
+}
+
+#[pyfunction]
+fn mesh_particles(request_json: &str) -> PyResult<String> {
+    crate::mesh_api::mesh_particles(request_json).map_err(PyValueError::new_err)
+}
+
+#[pyfunction]
+fn mesh_statistics(request_json: &str) -> PyResult<String> {
+    crate::mesh_api::mesh_statistics(request_json).map_err(PyValueError::new_err)
+}
+
+#[pyfunction]
+fn mesh_ftle(request_json: &str) -> PyResult<String> {
+    crate::mesh_api::mesh_ftle(request_json).map_err(PyValueError::new_err)
+}
+
+#[pyfunction]
 fn mesh_problem(spec_json: &str) -> String {
     crate::mesh_api::mesh_problem(spec_json)
 }
@@ -9042,6 +9062,10 @@ fn mesh_problem(spec_json: &str) -> String {
 #[pymodule]
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(mesh_filters, module)?)?;
+    module.add_function(wrap_pyfunction!(mesh_geometry, module)?)?;
+    module.add_function(wrap_pyfunction!(mesh_particles, module)?)?;
+    module.add_function(wrap_pyfunction!(mesh_statistics, module)?)?;
+    module.add_function(wrap_pyfunction!(mesh_ftle, module)?)?;
     module.add_function(wrap_pyfunction!(mesh_streamlines, module)?)?;
     module.add_function(wrap_pyfunction!(mesh_problem, module)?)?;
     module.add_function(wrap_pyfunction!(interpolate_number, module)?)?;

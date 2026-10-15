@@ -33,54 +33,25 @@ pub fn contour_lines(
             field: field_name.to_string(),
             reason: "contours require a scalar field".into(),
         })?;
+    // Per-cell segments in parallel, merged in cell order so the output
+    // is identical to the sequential result.
+    let segments: Vec<([f64; 3], [f64; 3], f64)> =
+        crate::parallel::parallel_map(dataset.cell_count(), |cell| {
+            extract_cell(dataset, values, levels, cell)
+        })
+        .into_iter()
+        .flatten()
+        .collect();
     let mut positions: Vec<[f64; 3]> = Vec::new();
     let mut level_values: Vec<f64> = Vec::new();
     let mut cells: Vec<(CellType, Vec<u32>)> = Vec::new();
-    let push = |p: [f64; 3], positions: &mut Vec<[f64; 3]>| -> u32 {
-        let id = positions.len() as u32;
-        positions.push(p);
-        id
-    };
-    for cell in 0..dataset.cell_count() {
-        let nodes = dataset.cells.cell(cell).unwrap_or(&[]);
-        let triangles: Vec<[u32; 3]> = match dataset.cells.types[cell] {
-            CellType::Triangle if nodes.len() == 3 => vec![[nodes[0], nodes[1], nodes[2]]],
-            CellType::Quad if nodes.len() == 4 => {
-                vec![
-                    [nodes[0], nodes[1], nodes[2]],
-                    [nodes[0], nodes[2], nodes[3]],
-                ]
-            }
-            _ => Vec::new(),
-        };
-        for tri in triangles {
-            let pts: Vec<[f64; 3]> = tri.iter().map(|&n| dataset.positions[n as usize]).collect();
-            let vals: Vec<f64> = tri.iter().map(|&n| values[n as usize]).collect();
-            for &level in levels {
-                // Marching triangles: collect edge crossings; a segment
-                // exists when exactly two edges cross the level.
-                let mut crossings: Vec<[f64; 3]> = Vec::new();
-                for e in 0..3 {
-                    let (a, b) = (e, (e + 1) % 3);
-                    let (va, vb) = (vals[a], vals[b]);
-                    if (va < level && vb >= level) || (vb < level && va >= level) {
-                        let t = (level - va) / (vb - va);
-                        crossings.push([
-                            pts[a][0] + (pts[b][0] - pts[a][0]) * t,
-                            pts[a][1] + (pts[b][1] - pts[a][1]) * t,
-                            pts[a][2] + (pts[b][2] - pts[a][2]) * t,
-                        ]);
-                    }
-                }
-                if crossings.len() == 2 {
-                    let a = push(crossings[0], &mut positions);
-                    let b = push(crossings[1], &mut positions);
-                    level_values.push(level);
-                    level_values.push(level);
-                    cells.push((CellType::Line, vec![a, b]));
-                }
-            }
-        }
+    for (a, b, level) in &segments {
+        let first = positions.len() as u32;
+        positions.push(*a);
+        positions.push(*b);
+        level_values.push(*level);
+        level_values.push(*level);
+        cells.push((CellType::Line, vec![first, first + 1]));
     }
     let refs: Vec<(CellType, &[u32])> = cells.iter().map(|(t, n)| (*t, n.as_slice())).collect();
     Ok(DataSet::new(
@@ -89,6 +60,50 @@ pub fn contour_lines(
         Cells::from_cells(&refs),
     )
     .with_field(Field::scalar("value", level_values)))
+}
+
+/// Marching-triangles segments of one cell at every level.
+fn extract_cell(
+    dataset: &DataSet,
+    values: &[f64],
+    levels: &[f64],
+    cell: usize,
+) -> Vec<([f64; 3], [f64; 3], f64)> {
+    let nodes = dataset.cells.cell(cell).unwrap_or(&[]);
+    let triangles: Vec<[u32; 3]> = match dataset.cells.types[cell] {
+        CellType::Triangle if nodes.len() == 3 => vec![[nodes[0], nodes[1], nodes[2]]],
+        CellType::Quad if nodes.len() == 4 => {
+            vec![
+                [nodes[0], nodes[1], nodes[2]],
+                [nodes[0], nodes[2], nodes[3]],
+            ]
+        }
+        _ => Vec::new(),
+    };
+    let mut segments = Vec::new();
+    for tri in triangles {
+        let pts: Vec<[f64; 3]> = tri.iter().map(|&n| dataset.positions[n as usize]).collect();
+        let vals: Vec<f64> = tri.iter().map(|&n| values[n as usize]).collect();
+        for &level in levels {
+            let mut crossings: Vec<[f64; 3]> = Vec::new();
+            for e in 0..3 {
+                let (a, b) = (e, (e + 1) % 3);
+                let (va, vb) = (vals[a], vals[b]);
+                if (va < level && vb >= level) || (vb < level && va >= level) {
+                    let t = (level - va) / (vb - va);
+                    crossings.push([
+                        pts[a][0] + (pts[b][0] - pts[a][0]) * t,
+                        pts[a][1] + (pts[b][1] - pts[a][1]) * t,
+                        pts[a][2] + (pts[b][2] - pts[a][2]) * t,
+                    ]);
+                }
+            }
+            if crossings.len() == 2 {
+                segments.push((crossings[0], crossings[1], level));
+            }
+        }
+    }
+    segments
 }
 
 #[cfg(test)]

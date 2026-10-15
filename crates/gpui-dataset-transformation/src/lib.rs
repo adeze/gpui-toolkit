@@ -10,12 +10,16 @@
 
 // Rust guideline compliant 2026-02-21
 
+mod analysis;
 mod base64;
 mod calculator;
 mod clip;
 mod contours;
+mod convert;
 mod eigen;
 mod flow;
+mod ftle;
+mod geometry;
 mod glyph;
 #[cfg(feature = "gpu")]
 pub mod gpu;
@@ -23,31 +27,42 @@ mod interp;
 mod isosurface;
 mod lic;
 mod lines;
+mod parallel;
 mod particles;
 mod plane;
 mod probe;
 mod streamline;
+mod surface;
+mod tensor_trace;
 mod threshold;
+mod triangulate;
 mod vtk_io;
 mod vtu;
 mod warp;
 mod xdmf;
 
+pub use analysis::{FieldStats, calculator, field_statistics, histogram, resample_to_grid};
 pub use calculator::{complex_magnitude, complex_phase, vector_magnitude};
 pub use clip::{clip_halfspace, slice};
 pub use contours::contour_lines;
+pub use convert::{cell_data_to_point_data, point_data_to_cell_data};
 pub use flow::{
     divergence, lambda2, q_criterion, swirling_strength, vorticity, vorticity_magnitude,
 };
+pub use ftle::ftle;
+pub use geometry::{append_datasets, clip_sphere, decimate, smooth, transform_dataset};
 pub use glyph::{GlyphKind, glyphs, solid_arrows, tensor_glyphs};
 pub use isosurface::isosurface;
 pub use lic::lic;
 pub use lines::{dashed_lines, stream_ribbons, streamtubes};
-pub use particles::{ParticleOptions, particle_frames};
+pub use particles::{ParticleOptions, StreakOptions, particle_frames, streak_frames};
 pub use plane::Plane;
 pub use probe::probe;
-pub use streamline::streamlines;
+pub use streamline::{streamlines, streamlines_adaptive};
+pub use surface::{feature_edges, surface_normals};
+pub use tensor_trace::hyperstreamlines;
 pub use threshold::{ThresholdMode, threshold};
+pub use triangulate::{convex_hull, delaunay_2d};
 pub use vtk_io::{read_vtk, write_vtk};
 pub use vtu::{read_vtu, write_vtu};
 pub use warp::{warp_by_scalar, warp_by_vector};

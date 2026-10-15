@@ -2,6 +2,16 @@
 
 ## Added
 
+- `gpu` feature: `GpuRenderer` / `GpuScene` / `GpuTarget` — GPU-resident
+  surface rendering. Geometry and colour LUTs upload once; per-frame
+  draws rewrite only per-actor uniforms, so nothing returns to the CPU.
+  Opaque and transparent (sorted, blended) pipelines, clip planes, and
+  a QA readback for headless tests and movie export. `gpu_render`
+  example renders a 1080p isosurface (about 2x faster than the software
+  rasterizer in debug builds, before readback).
+
+## Added
+
 - `legend` module: colour-bar data (nice ticks, formatted labels),
   pixel layout, gradient-strip painting into software frames, axis
   triad overlay, and `Annotation` text anchors on `Scene`.

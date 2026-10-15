@@ -2,6 +2,16 @@
 
 ## Features
 
+- `gpui_toolkit.mesh` stays in sync with the new Rust filters: the
+  `run`/`geometry` op chains accept `point_to_cell`, `cell_to_point`,
+  `normals`, `feature_edges`, `decimate`, `smooth`, `clip_sphere`,
+  `calculator`, `resample`, `hyperstreamlines`, `delaunay`,
+  `convex_hull`, `transform`, and `append`, and new `mesh_statistics` /
+  `mesh_ftle` native functions back `mesh.statistics()` and
+  `mesh.ftle()`.
+
+## Features
+
 - Mesh visualization bridge to `gpui-mesh` and
   `gpui-dataset-transformation` (both now workspace dependencies): the
   native extension exports `mesh_filters` (structured-grid dataset spec
@@ -10,6 +20,14 @@
   RK2 streamlines stitched into polylines), and `mesh_problem` (spec
   validation). The new `gpui_toolkit.mesh` Python module wraps them with
   `structured`, `slice_`, `clip`, `run`, `problem`, and `streamlines`.
+- The bridge now also exposes the flow-visualisation wave in sync with
+  the Rust filters: `mesh_geometry` (points/cells/fields for
+  `solid_arrows`, `tensor_glyphs`, `streamtubes`, `stream_ribbons`,
+  `dashed_lines`, `contour_lines`, `lic`) and `mesh_particles`
+  (time-dependent particle advection), with matching `gpui_toolkit.mesh`
+  helpers (`arrows`, `tensor_glyphs`, `tubes`, `ribbons`, `dashes`,
+  `contours`, `lic`, `geometry`, `particles`, tensor fields in
+  `structured`).
 
 # 0.10.33
 
