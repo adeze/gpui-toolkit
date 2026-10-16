@@ -8,7 +8,7 @@
   const themes = ['dark', 'light', 'midnight', 'forest', 'black-and-white', 'onyx', 'carbon-white', 'carbon-gray-10', 'carbon-gray-90', 'carbon-gray-100'];
   const designs = ['neutral', 'apple', 'apple_hig', 'material3', 'fluent', 'adwaita', 'breeze', 'carbon'];
   const names = { apple: 'macOS', apple_hig: 'Apple HIG', material3: 'Material 3', fluent: 'Fluent', neutral: 'Neutral', adwaita: 'Adwaita', breeze: 'Breeze', carbon: 'Carbon' };
-  const demos = { showcase: 'UI Kit', px: 'Charts', d3rs: 'D3 primitives', spinorama: 'Spinorama', hello: 'Hello WebGPU' };
+  const demos = { showcase: 'UI Kit', px: 'Charts', d3rs: 'D3 primitives', spinorama: 'Spinorama', mesh: 'Mesh', hello: 'Hello WebGPU' };
   const app = document.documentElement.dataset.demo;
   const style = document.createElement('style');
   style.textContent = `

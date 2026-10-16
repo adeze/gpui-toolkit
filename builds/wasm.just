@@ -44,6 +44,10 @@ wasm-serve-d3rs:
 wasm-serve-spinorama:
 	cd crates/gpui-spinorama && env -u NO_COLOR RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort trunk serve --release
 
+[group('wasm')]
+wasm-serve-mesh:
+	cd crates/gpui-scene3d && env -u NO_COLOR RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort trunk serve --release
+
 # Screenshot a served wasm app and diff against qa/visual/wasm/baselines/<name>.png.
 # Positional args: `just wasm-visual hello 8080 gpui-hello-web` (defaults: showcase).
 # Append `record` as a 4th arg to (re)write the baseline instead of comparing.
@@ -83,7 +87,7 @@ wasm-visual name="showcase" port="8081" dir="gpui-showcase" record="" click_x=""
 wasm-build-site:
 	#!/usr/bin/env bash
 	set -euo pipefail
-	mkdir -p target/demo-site/hello target/demo-site/showcase target/demo-site/px target/demo-site/d3rs target/demo-site/spinorama
+	mkdir -p target/demo-site/hello target/demo-site/showcase target/demo-site/px target/demo-site/d3rs target/demo-site/spinorama target/demo-site/mesh
 	assert_wasm_public_url() {
 		local dist="$1"
 		local public_url="$2"
@@ -112,6 +116,9 @@ wasm-build-site:
 	cd ../gpui-spinorama
 	env -u NO_COLOR RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort trunk build --release --public-url /spinorama/ --dist ../../target/demo-site/spinorama
 	assert_wasm_public_url ../../target/demo-site/spinorama /spinorama/
+	cd ../gpui-scene3d
+	env -u NO_COLOR RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort trunk build --release --public-url /mesh/ --dist ../../target/demo-site/mesh
+	assert_wasm_public_url ../../target/demo-site/mesh /mesh/
 
 # Capture every query-addressable showcase section, then generate thumbnails,
 # featured theme/style variants, manifest.json, and the static gallery index.
@@ -144,7 +151,11 @@ wasm-gallery only="":
 		cd crates/gpui-spinorama
 		env -u NO_COLOR RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort trunk serve --release --port 8084 --open=false --no-autoreload
 	) & pids+=("$!")
-	for port in 8081 8082 8083 8084; do
+	(
+		cd crates/gpui-scene3d
+		env -u NO_COLOR RUSTUP_TOOLCHAIN=nightly CARGO_UNSTABLE_BUILD_STD=std,panic_abort trunk serve --release --port 8085 --open=false --no-autoreload
+	) & pids+=("$!")
+	for port in 8081 8082 8083 8084 8085; do
 		server_up=""
 		startup_interval_s=2
 		startup_attempts=$(( ({{wasm_gallery_startup_timeout_s}} + startup_interval_s - 1) / startup_interval_s ))
@@ -171,6 +182,7 @@ wasm-gallery only="":
 		--url px=http://127.0.0.1:8082 \
 		--url d3rs=http://127.0.0.1:8083 \
 		--url spinorama=http://127.0.0.1:8084 \
+		--url mesh=http://127.0.0.1:8085 \
 		${only_flags[@]+"${only_flags[@]}"} \
 		--readme-snippet target/demo-site/README-snippet.md
 

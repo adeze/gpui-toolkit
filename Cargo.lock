@@ -2893,6 +2893,7 @@ dependencies = [
  "sotf-gpui-toolkit-gpui-macos",
  "sotf-wgpu",
  "thiserror 2.0.21",
+ "wasm-bindgen",
 ]
 
 [[package]]

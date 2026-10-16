@@ -84,6 +84,49 @@ class DemoGalleryTest(unittest.TestCase):
         self.assertIn(first["live_theme"], gallery.THEME_VALUES)
         self.assertIn(first["live_style"], gallery.STYLE_VALUES)
 
+    def test_entries_propagate_capture_extra_query(self):
+        catalog = {
+            "schema_version": 1,
+            "apps": [{"id": "d3rs", "title": "d3rs", "description": "d3rs", "route": "d3rs/"}],
+        }
+        manifests = {
+            "d3rs": {
+                "captures": [
+                    {
+                        "id": "geo-desktop",
+                        "section": "geo",
+                        "section_label": "Geo",
+                        "group": "D3",
+                        "viewport_id": "desktop",
+                        "viewport_label": "Desktop",
+                        "width": 1200,
+                        "height": 900,
+                        "scale_factor": 1,
+                        "renderer_query": "auto",
+                        "extra_query": {"dataset": "large"},
+                    },
+                    {
+                        "id": "scales-desktop",
+                        "section": "scales",
+                        "section_label": "Scales",
+                        "group": "D3",
+                        "viewport_id": "desktop",
+                        "viewport_label": "Desktop",
+                        "width": 1200,
+                        "height": 900,
+                        "scale_factor": 1,
+                    },
+                ]
+            }
+        }
+        entries = gallery.entries_for(catalog, manifests)
+        geo = next(entry for entry in entries if entry["id"] == "d3rs-geo-desktop")
+        scales = next(entry for entry in entries if entry["id"] == "d3rs-scales-desktop")
+        self.assertIn("dataset=large", geo["live_url"])
+        self.assertEqual(geo["extra_query"], {"dataset": "large"})
+        self.assertNotIn("dataset=", scales["live_url"])
+        self.assertEqual(scales["extra_query"], {})
+
     def test_featured_variants_cover_themes_and_styles(self):
         base = {
             "id": "showcase-buttons-desktop",

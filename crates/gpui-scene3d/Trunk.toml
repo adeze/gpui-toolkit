@@ -1,0 +1,13 @@
+[build]
+target = "index.html"
+# The browser demo is the mesh-showcase example target (examples, not bins, so
+# it can use the dev-dependency MiniApp shell without a package cycle).
+example = "mesh-showcase"
+# The example's required features; explicit so the demo survives default drift.
+features = ["gpui"]
+
+[serve]
+addresses = ["127.0.0.1"]
+port = 8085
+open = true
+headers = { "Cross-Origin-Embedder-Policy" = "require-corp", "Cross-Origin-Opener-Policy" = "same-origin" }

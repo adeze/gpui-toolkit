@@ -232,9 +232,16 @@ pub(super) fn visual_manifest_json() -> String {
                 ","
             };
             let capture_id = format!("{section_slug}-{viewport_id}");
+            // The geo capture uses the full 50m world dataset so gallery
+            // thumbnails show detailed coastlines, not the simplified default.
+            let extra_query = if matches!(*section, DemoSection::Geo) {
+                ", \"extra_query\": {\"dataset\": \"large\"}"
+            } else {
+                ""
+            };
             let _ = writeln!(
                 json,
-                "    {{ \"id\": \"{capture_id}\", \"group\": \"D3\", \"section\": \"{section_slug}\", \"section_label\": \"{}\", \"viewport_id\": \"{viewport_id}\", \"viewport_label\": \"{viewport_label}\", \"width\": {width}, \"height\": {height}, \"scale_factor\": {scale_factor}, \"renderer\": \"vello-auto\", \"renderer_query\": \"auto\", \"renderer_qa_queries\": [\"auto\", \"cpu\", \"legacy\"] }}{comma}",
+                "    {{ \"id\": \"{capture_id}\", \"group\": \"D3\", \"section\": \"{section_slug}\", \"section_label\": \"{}\", \"viewport_id\": \"{viewport_id}\", \"viewport_label\": \"{viewport_label}\", \"width\": {width}, \"height\": {height}, \"scale_factor\": {scale_factor}, \"renderer\": \"vello-auto\", \"renderer_query\": \"auto\", \"renderer_qa_queries\": [\"auto\", \"cpu\", \"legacy\"]{extra_query} }}{comma}",
                 escape_json(section.label())
             );
         }
@@ -281,5 +288,8 @@ mod tests {
         assert!(manifest.contains("\"id\": \"d3-volcano-narrow\""));
         assert!(manifest.contains("\"renderer\": \"vello-auto\""));
         assert!(manifest.contains("\"renderer_query\": \"auto\""));
+        assert!(manifest.contains("\"id\": \"geo-desktop\", \"group\": \"D3\", \"section\": \"geo\""));
+        assert!(manifest.contains("\"extra_query\": {\"dataset\": \"large\"}"));
+        assert_eq!(manifest.matches("\"extra_query\"").count(), 2);
     }
 }

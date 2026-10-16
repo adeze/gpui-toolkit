@@ -27,7 +27,6 @@ urlencoding = []
 [dependencies]
 # GPUI framework
 gpui = { workspace = true }
-# gpui_macros = { workspace = true }
 
 # UI kit for components
 gpui-ui-kit = { workspace = true }

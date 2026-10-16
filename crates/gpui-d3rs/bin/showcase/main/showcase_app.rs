@@ -147,6 +147,20 @@ impl ShowcaseApp {
             .collect()
     }
 
+    /// Optional geo-dataset override for browser capture. `?dataset=large`
+    /// (also `full` or `50m`) starts the geo demo with the full 50m world
+    /// dataset so captures show detailed coastlines instead of the
+    /// simplified default. The default stays small for fast first paint.
+    fn initial_use_large_data() -> bool {
+        #[cfg(target_family = "wasm")]
+        let requested = gpui_miniapp::web_query_param("dataset");
+        #[cfg(not(target_family = "wasm"))]
+        let requested = std::env::var("D3RS_SHOWCASE_DATASET").ok();
+
+        let normalized = requested.as_deref().unwrap_or("").trim().to_ascii_lowercase();
+        matches!(normalized.as_str(), "large" | "full" | "50m")
+    }
+
     /// Optional initial-section override for browser capture, matched
     /// case-insensitively against `DemoSection::label()` or its slug.
     fn initial_section() -> DemoSection {
@@ -268,7 +282,7 @@ impl ShowcaseApp {
                 .collect(),
             horizon_offset: 0.0,
             horizon_animating: false,
-            use_large_data: false,
+            use_large_data: Self::initial_use_large_data(),
             is_dragging: false,
             last_mouse_pos: None,
             surface_plot_cache: None,

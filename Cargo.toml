@@ -43,9 +43,7 @@ resolver = "3"
 [workspace.package]
 version = "0.10.44"
 authors = ["Pierre F. Aubert pierre@spinorama.org"]
-description = "A toolkit to build portable and fast UI"
 edition = "2024"
-documentation = "https://docs.rs/gpui-toolkit"
 license = "ISC"
 repository = "https://github.com/pierreaubert/gpui-toolkit"
 keywords = ["gpui", "ui", "visualization"]
@@ -106,7 +104,6 @@ gpui-foreign-parent = { path = "crates/gpui-foreign-parent", version = "0.10" }
 gpui-ios = { path = "crates/gpui-ios", version = "0.10" }
 gpui-keybinding = { path = "crates/gpui-keybinding", version = "0.10" }
 gpui-layout-expr = { path = "crates/gpui-layout-expr", version = "0.10" }
-gpui-linux-foreign = { path = "crates/gpui-linux-foreign", version = "0.10" }
 gpui-mesh = { path = "crates/gpui-mesh", version = "0.10" }
 gpui-miniapp = { path = "crates/gpui-miniapp", version = "0.10" }
 gpui-pretext = { path = "crates/gpui-pretext", version = "0.10" }
@@ -115,15 +112,10 @@ gpui-px = { path = "crates/gpui-px", version = "0.10", default-features = false 
 gpui-python-runtime = { path = "crates/gpui-python-runtime", version = "0.10" }
 gpui-release-gates = { path = "crates/gpui-release-gates", version = "0.10" }
 gpui-scaffolder = { path = "crates/gpui-scaffolder", version = "0.10" }
-gpui-scene3d = { path = "crates/gpui-scene3d", version = "0.10", default-features = false }
 gpui-showcase = { path = "crates/gpui-showcase", version = "0.10" }
 gpui-themes = { path = "crates/gpui-themes", version = "0.10" }
-gpui-toolkit = { path = "crates/gpui-toolkit", version = "0.10" }
-gpui-toolkit-cli = { path = "crates/gpui-toolkit-cli", version = "0.10" }
 gpui-ui-kit = { path = "crates/gpui-ui-kit", version = "0.10" }
 gpui-ui-kit-macros = { path = "crates/gpui-ui-kit-macros", version = "0.10" }
-gpui-web-foreign = { path = "crates/gpui-web-foreign", version = "0.10" }
-gpui-win-foreign = { path = "crates/gpui-win-foreign", version = "0.10" }
 
 # GPUI framework derived from Zed. The dependency keys retain the upstream
 # Rust crate names, while package names are namespaced for crates.io.
@@ -133,7 +125,6 @@ gpui-win-foreign = { path = "crates/gpui-win-foreign", version = "0.10" }
 # compile two copies of gpui. Drop all branch pins once that work merges
 # to the fork's default branch.
 gpui = { package = "sotf-gpui-toolkit-gpui", git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", version = "0.2.3", default-features = false }
-gpui_macros = { package = "sotf-gpui-toolkit-gpui-macros", git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", version = "0.1.0" }
 gpui_macos = { package = "sotf-gpui-toolkit-gpui-macos", git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", version = "0.1.1", default-features = false, features = ["font-kit"] }
 gpui_linux = { package = "sotf-gpui-toolkit-gpui-linux", git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", version = "0.1.0", default-features = false }
 gpui_windows = { package = "sotf-gpui-toolkit-gpui-windows", git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", version = "0.1.2", default-features = false }
@@ -150,89 +141,13 @@ kurbo = { version = "0.13.1" }
 parley = { version = "0.11.1", default-features = false, features = ["std"] }
 fontique = { version = "0.11.1", default-features = false, features = ["std"] }
 
-# Internal crates derived from Zed, published under the gpui-toolkit namespace.
-collections = { package = "sotf-collections",  git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", version = "0.1.0" }
-util = { package = "sotf-gpui-toolkit-util", git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", version = "0.1.1" }
-util_macros = { package = "sotf-gpui-toolkit-util-macros", git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", version = "0.1.0" }
-perf = { package = "sotf-gpui-toolkit-perf", git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", version = "0.1.0" }
-gpui_util = { package = "sotf-gpui_util",  git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", version = "0.1.0" }
-gpui_shared_string = { package = "sotf-gpui_shared_string",  git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", version = "0.1.0" }
-http_client = { package = "sotf-gpui-toolkit-http-client", git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", version = "0.1.0" }
-media = { package = "sotf-media",  git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", version = "0.1.0" }
-scheduler = { package = "sotf-gpui-toolkit-scheduler", git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", version = "0.1.0" }
-sum_tree = { package = "sotf-gpui-toolkit-sum-tree", git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", version = "0.1.0" }
-refineable = { package = "sotf-refineable",  git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", version = "0.1.0" }
-scap = { git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", default-features = false, package = "sotf-zed-scap", version = "0.0.8-zed" }
-
-# Windows crate used by gpui_windows
-windows = { version = "0.62", features = [
-    "Foundation_Numerics",
-    "Globalization_DateTimeFormatting",
-    "Storage_Search",
-    "Storage_Streams",
-    "System_Threading",
-    "UI_ViewManagement",
-    "Wdk_System_SystemServices",
-    "Win32_Foundation",
-    "Win32_Globalization",
-    "Win32_Graphics_Direct3D",
-    "Win32_Graphics_Direct3D11",
-    "Win32_Graphics_Direct3D_Fxc",
-    "Win32_Graphics_DirectComposition",
-    "Win32_Graphics_DirectWrite",
-    "Win32_Graphics_DirectManipulation",
-    "Win32_Graphics_Dwm",
-    "Win32_Graphics_Dxgi",
-    "Win32_Graphics_Dxgi_Common",
-    "Win32_Graphics_Gdi",
-    "Win32_Graphics_Imaging",
-    "Win32_Graphics_Hlsl",
-    "Win32_Networking_WinSock",
-    "Win32_Security",
-    "Win32_Security_Credentials",
-    "Win32_Security_Cryptography",
-    "Win32_Storage_FileSystem",
-    "Win32_System_Com",
-    "Win32_System_Com_StructuredStorage",
-    "Win32_System_Console",
-    "Win32_System_Diagnostics_Debug",
-    "Win32_System_DataExchange",
-    "Win32_System_IO",
-    "Win32_System_LibraryLoader",
-    "Win32_System_Memory",
-    "Win32_System_Ole",
-    "Win32_System_Performance",
-    "Win32_System_Pipes",
-    "Win32_System_RestartManager",
-    "Win32_System_SystemInformation",
-    "Win32_System_SystemServices",
-    "Win32_System_Threading",
-    "Win32_System_Variant",
-    "Win32_System_WinRT",
-    "Win32_UI_Controls",
-    "Win32_UI_HiDpi",
-    "Win32_UI_Input_Ime",
-    "Win32_UI_Input_KeyboardAndMouse",
-    "Win32_UI_Input_Pointer",
-    "Win32_UI_Shell",
-    "Win32_UI_Shell_Common",
-    "Win32_UI_Shell_PropertiesSystem",
-    "Win32_UI_WindowsAndMessaging",
-    "Win32_Media",
-] }
-windows-core = "0.62"
 
 # Utilities
 approx = "0.5"
 criterion = "0.8.2"
-itertools = "0.15"
 proptest = "1.9"
-rand = "0.10.2"
-unicode-normalization = "0.1"
 toml = "1.1"
 uuid = { version = "1", features = ["v4", "v5", "serde"] }
-lazy_static = "1.4"
-bincode = { version = "2.0.1", features = ["serde"] }
 
 # Proc macro dependencies
 proc-macro2 = "1"

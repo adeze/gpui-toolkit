@@ -103,11 +103,14 @@ def entries_for(catalog: dict, manifests: dict[str, dict]) -> list[dict]:
                 live_params = {"section": section, "theme": live_theme, "style": live_style}
                 if renderer_query:
                     live_params["renderer"] = renderer_query
+                extra_query = capture.get("extra_query") or {}
+                live_params.update(extra_query)
                 entries.append(
                     {
                         "id": entry_id,
                         "live_theme": live_theme,
                         "live_style": live_style,
+                        "extra_query": extra_query,
                         "app_id": app_id,
                         "app_title": app["title"],
                         "app_description": app["description"],
@@ -238,6 +241,8 @@ def capture_entries(
             query_params["style"] = entry["capture_style"]
         if entry.get("renderer_query"):
             query_params["renderer"] = entry["renderer_query"]
+        if entry.get("extra_query"):
+            query_params.update(entry["extra_query"])
         query = urlencode(query_params)
         output = output_root / Path(entry["image"]).relative_to("snapshots")
         output.parent.mkdir(parents=True, exist_ok=True)

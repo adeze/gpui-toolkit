@@ -27,7 +27,9 @@ software frames; scenes also carry text `Annotation`s for GPUI hosts.
 `TransferFunction::banded` quantises a ramp for filled contours.
 Examples: `pcfan_airflow`, `speaker_port`, `necking_bar`,
 `interactive_viewer`, and `flow_showcase` (Taylor-Green vortex exercising
-arrows, tubes, LIC, contours, tensor glyphs, particles, legend). The
+arrows, tubes, LIC, contours, tensor glyphs, particles, legend).
+`mesh-showcase` is the same Taylor-Green field as a browser demo
+(`just wasm-serve-mesh`): vortex cores, slice, contours, shells. The
 `gpu` feature adds `GpuRenderer`: scenes upload their geometry and LUTs
 once and then draw by rewriting only the 288-byte per-actor uniform
 block, so frames never read geometry back to the CPU (Metal on Apple

@@ -85,6 +85,27 @@
       ]
     },
     {
+      "id": "mesh",
+      "title": "Mesh Showcase",
+      "description": "3D mesh fields on a Taylor-Green vortex: vortex cores, slices, contours, and isosurface shells.",
+      "route": "mesh/",
+      "source_url": "https://github.com/pierreaubert/gpui-toolkit/tree/main/crates/gpui-scene3d",
+      "port": 8085,
+      "manifest_command": [
+        "cargo",
+        "run",
+        "-p",
+        "gpui-scene3d",
+        "--features",
+        "gpui",
+        "--example",
+        "mesh-showcase",
+        "--",
+        "--visual-manifest",
+        "--json"
+      ]
+    },
+    {
       "id": "hello",
       "title": "Hello WebGPU",
       "description": "The minimal GPUI-on-WASM smoke demo.",
@@ -97,13 +118,15 @@
     "showcase-buttons-desktop",
     "showcase-form-controls-desktop",
     "showcase-workflow-desktop",
-    "px-scatter-desktop",
     "px-heatmap-desktop",
     "px-contour-desktop",
-    "d3rs-d3-volcano-desktop",
+    "px-scatter-desktop",
     "d3rs-geo-desktop",
+    "d3rs-d3-volcano-desktop",
     "spinorama-3d-surface-desktop",
     "spinorama-cea-2034-desktop",
+    "mesh-vortices-desktop",
+    "mesh-slice-desktop",
     "hello"
   ]
 }
