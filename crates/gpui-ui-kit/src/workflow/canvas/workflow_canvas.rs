@@ -51,6 +51,7 @@ struct WorkflowRenderSnapshot {
 ///
 /// A ReactFlow-like canvas for editing node-based workflows.
 pub struct WorkflowCanvas {
+    read_only: bool,
     pub(super) state: CanvasState,
     pub(super) history: HistoryManager,
     pub(super) hit_tester: HitTester,
@@ -81,6 +82,7 @@ pub struct WorkflowCanvas {
 impl WorkflowCanvas {
     pub fn new(cx: &mut Context<Self>) -> Self {
         Self {
+            read_only: false,
             state: CanvasState::new(),
             history: HistoryManager::new(),
             hit_tester: HitTester::new(),
@@ -100,6 +102,7 @@ impl WorkflowCanvas {
     /// Create with an existing graph
     pub fn with_graph(graph: WorkflowGraph, cx: &mut Context<Self>) -> Self {
         Self {
+            read_only: false,
             state: CanvasState::with_graph(graph),
             history: HistoryManager::new(),
             hit_tester: HitTester::new(),
@@ -113,6 +116,19 @@ impl WorkflowCanvas {
             on_graph_change: None,
             on_node_menu_select: None,
             render_snapshot: None,
+        }
+    }
+
+    /// Disable user edits while retaining selection and zoom. Programmatic updates remain allowed.
+    pub fn set_read_only(&mut self, read_only: bool) {
+        self.read_only = read_only;
+        if read_only {
+            self.state.mode = InteractionMode::None;
+            self.state.node_drag = None;
+            self.state.connection_drag = None;
+            self.state.bulk_connect_drag = None;
+            self.state.box_selection = None;
+            self.state.context_menu = None;
         }
     }
 
@@ -471,6 +487,17 @@ impl WorkflowCanvas {
             &self.state.viewport,
         );
 
+        if self.read_only {
+            match hit {
+                HitTestResult::Node(id)
+                | HitTestResult::InputPort(id, _)
+                | HitTestResult::OutputPort(id, _) => self.state.selection.select_node(id, false),
+                _ => self.state.selection.clear(),
+            }
+            cx.notify();
+            return;
+        }
+
         match hit {
             HitTestResult::OutputPort(node_id, port_idx) => {
                 self.state.mode = InteractionMode::CreatingConnection;
@@ -709,6 +736,9 @@ impl WorkflowCanvas {
     }
 
     pub(super) fn handle_right_click(&mut self, position: Position, cx: &mut Context<Self>) {
+        if self.read_only {
+            return;
+        }
         // Show context menu at click position.
         // `position` is in screen coordinates relative to the canvas element;
         // the menu is rendered as a child of the relative canvas div, so the
@@ -880,6 +910,9 @@ impl WorkflowCanvas {
     }
 
     pub(super) fn handle_key_down(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        if self.read_only {
+            return;
+        }
         let modifiers = event.keystroke.modifiers;
 
         match &event.keystroke.key {
@@ -1488,5 +1521,40 @@ impl Render for WorkflowCanvas {
             // Make focusable to receive keyboard events
             .focusable()
             .track_focus(&self.focus_handle)
+    }
+}
+
+#[cfg(test)]
+mod read_only_tests {
+    use super::*;
+
+    #[gpui::test]
+    fn read_only_canvas_selects_without_editing(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext;
+        let canvas = cx.new(WorkflowCanvas::new);
+        canvas.update(cx, |canvas, cx| {
+            let node = WorkflowNodeData::new("Stage", Position::new(20.0, 20.0));
+            let id = canvas.graph_mut().add_node(node);
+            let original = serde_json::to_value(canvas.graph()).unwrap();
+            canvas.set_read_only(true);
+            canvas.handle_mouse_down(Position::new(80.0, 35.0), false, true, cx);
+            assert!(canvas.selection().is_node_selected(id));
+            canvas.handle_mouse_move(Position::new(180.0, 100.0), cx);
+            canvas.handle_mouse_up(Position::new(180.0, 100.0), cx);
+            canvas.handle_right_click(Position::new(80.0, 35.0), cx);
+            assert!(canvas.state.context_menu.is_none());
+            canvas.handle_key_down(
+                &KeyDownEvent {
+                    keystroke: gpui::Keystroke::parse("backspace").unwrap(),
+                    is_held: false,
+                    prefer_character_input: false,
+                },
+                cx,
+            );
+            assert_eq!(serde_json::to_value(canvas.graph()).unwrap(), original);
+            canvas.set_read_only(false);
+            canvas.handle_mouse_down(Position::new(80.0, 35.0), false, false, cx);
+            assert_eq!(canvas.state.mode, InteractionMode::DraggingNodes);
+        });
     }
 }

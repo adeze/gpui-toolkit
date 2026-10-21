@@ -4,6 +4,8 @@
 
 ### Added
 
+- `WorkflowCanvas::set_read_only`: retain node inspection and zoom while blocking user node movement, rewiring, context menus, and destructive keyboard edits. Programmatic graph updates remain supported.
+
 - Mesh data-model and I/O wave: rectilinear/curvilinear grids, polygon
   cells, composite (multiblock/AMR) datasets, time-series sampling, VTU
   appended and zlib-compressed I/O, STL/OBJ/PLY surface files, and PVD
