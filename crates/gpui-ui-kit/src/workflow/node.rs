@@ -48,6 +48,7 @@ pub struct WorkflowNode {
     data: WorkflowNodeData,
     selected: bool,
     dragging: bool,
+    compact: bool,
     theme: Option<WorkflowTheme>,
     content: Option<Box<dyn NodeContent>>,
 
@@ -69,6 +70,7 @@ impl WorkflowNode {
             data,
             selected: false,
             dragging: false,
+            compact: false,
             theme: None,
             content: None,
             on_select: None,
@@ -87,6 +89,12 @@ impl WorkflowNode {
     /// Set whether the node is being dragged
     pub fn dragging(mut self, dragging: bool) -> Self {
         self.dragging = dragging;
+        self
+    }
+
+    /// Omit the default title body; custom content is still rendered.
+    pub fn compact(mut self, compact: bool) -> Self {
+        self.compact = compact;
         self
     }
 
@@ -284,11 +292,11 @@ impl RenderOnce for WorkflowNode {
                     })
                     // Main content (min_w_0 lets long content shrink
                     // inside the fixed node width instead of overflowing it)
-                    .child(div().flex_1().min_w_0().overflow_hidden().p_2().child(
+                    .child(div().flex_1().min_w_0().overflow_hidden().p_2().children(
                         if let Some(content) = self.content {
-                            content.render(&self.data, cx)
+                            Some(content.render(&self.data, cx))
                         } else {
-                            DefaultNodeContent.render(&self.data, cx)
+                            (!self.compact).then(|| DefaultNodeContent.render(&self.data, cx))
                         },
                     ))
                     // Output ports column - use relative positioning to match hit_test.rs

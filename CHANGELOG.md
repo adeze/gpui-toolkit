@@ -4,6 +4,9 @@
 
 ### Added
 
+- `WorkflowCanvas::fit_to_view`: explicitly fit graph bounds to the painted viewport without resetting navigation on data refresh; reject invalid bounds or unsupported zoom.
+- Opt-in `WorkflowNode::compact` and `WorkflowCanvas::set_compact_nodes` omit duplicate default body titles while preserving custom content and existing defaults.
+
 - `WorkflowCanvas::set_read_only`: retain node inspection and zoom while blocking user node movement, rewiring, context menus, and destructive keyboard edits. Programmatic graph updates remain supported.
 
 - Mesh data-model and I/O wave: rectilinear/curvilinear grids, polygon

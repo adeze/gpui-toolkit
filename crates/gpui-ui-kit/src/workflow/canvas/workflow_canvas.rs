@@ -52,6 +52,7 @@ struct WorkflowRenderSnapshot {
 /// A ReactFlow-like canvas for editing node-based workflows.
 pub struct WorkflowCanvas {
     read_only: bool,
+    compact_nodes: bool,
     pub(super) state: CanvasState,
     pub(super) history: HistoryManager,
     pub(super) hit_tester: HitTester,
@@ -83,6 +84,7 @@ impl WorkflowCanvas {
     pub fn new(cx: &mut Context<Self>) -> Self {
         Self {
             read_only: false,
+            compact_nodes: false,
             state: CanvasState::new(),
             history: HistoryManager::new(),
             hit_tester: HitTester::new(),
@@ -103,6 +105,7 @@ impl WorkflowCanvas {
     pub fn with_graph(graph: WorkflowGraph, cx: &mut Context<Self>) -> Self {
         Self {
             read_only: false,
+            compact_nodes: false,
             state: CanvasState::with_graph(graph),
             history: HistoryManager::new(),
             hit_tester: HitTester::new(),
@@ -130,6 +133,11 @@ impl WorkflowCanvas {
             self.state.box_selection = None;
             self.state.context_menu = None;
         }
+    }
+
+    /// Omit default node title bodies without changing graph geometry or custom content.
+    pub fn set_compact_nodes(&mut self, compact: bool) {
+        self.compact_nodes = compact;
     }
 
     /// Set custom theme
@@ -450,6 +458,61 @@ impl WorkflowCanvas {
         self.state.viewport.offset = Position::new(0.0, 0.0);
         self.state.viewport.zoom = 1.0;
         cx.notify();
+    }
+
+    /// Fit all nodes within the last painted bounds, preserving supported zoom limits.
+    /// Returns false for empty/invalid bounds or a graph too large for minimum zoom.
+    pub fn fit_to_view(&mut self, cx: &mut Context<Self>) -> bool {
+        let (width, height) = self.state.viewport.size;
+        let padding = 16.0;
+        if !width.is_finite()
+            || !height.is_finite()
+            || width <= padding * 2.0
+            || height <= padding * 2.0
+        {
+            return false;
+        }
+        let bounds = self.state.graph.nodes.values().try_fold(
+            (
+                f32::INFINITY,
+                f32::INFINITY,
+                f32::NEG_INFINITY,
+                f32::NEG_INFINITY,
+            ),
+            |(left, top, right, bottom), node| {
+                ([node.position.x, node.position.y, node.width, node.height]
+                    .iter()
+                    .all(|value| value.is_finite())
+                    && node.width > 0.0
+                    && node.height > 0.0)
+                    .then_some((
+                        left.min(node.position.x),
+                        top.min(node.position.y),
+                        right.max(node.position.x + node.width),
+                        bottom.max(node.position.y + node.height),
+                    ))
+            },
+        );
+        let Some((left, top, right, bottom)) = bounds else {
+            return false;
+        };
+        let (span_x, span_y) = (right - left, bottom - top);
+        if !span_x.is_finite() || !span_y.is_finite() || span_x <= 0.0 || span_y <= 0.0 {
+            return false;
+        }
+        let zoom = ((width - padding * 2.0) / span_x)
+            .min((height - padding * 2.0) / span_y)
+            .min(1.0);
+        if zoom < 0.25 {
+            return false;
+        }
+        self.state.viewport.zoom = zoom;
+        self.state.viewport.offset = Position::new(
+            (width - span_x * zoom) / 2.0 - left * zoom,
+            (height - span_y * zoom) / 2.0 - top * zoom,
+        );
+        cx.notify();
+        true
     }
 
     /// Get statistics: (`node_count`, `connection_count`, `selected_count`)
@@ -1149,6 +1212,8 @@ impl WorkflowCanvas {
                 let origin_y: f32 = bounds.origin.y.into();
                 entity.update(cx, |this, _| {
                     this.canvas_origin = Position::new(origin_x, origin_y);
+                    this.state.viewport.size =
+                        (bounds.size.width.into(), bounds.size.height.into());
                 });
                 (
                     Arc::clone(&connections),
@@ -1293,6 +1358,7 @@ impl WorkflowCanvas {
                 WorkflowNode::new(SharedString::from(format!("node-{}", node.id)), screen_node)
                     .selected(selected)
                     .dragging(dragging)
+                    .compact(self.compact_nodes)
                     .theme(scaled_theme.clone())
             })
             .collect()
@@ -1533,6 +1599,9 @@ mod read_only_tests {
         use gpui::AppContext;
         let canvas = cx.new(WorkflowCanvas::new);
         canvas.update(cx, |canvas, cx| {
+            let default_compact = canvas.compact_nodes;
+            canvas.set_compact_nodes(true);
+            assert_eq!((default_compact, canvas.compact_nodes), (false, true));
             let node = WorkflowNodeData::new("Stage", Position::new(20.0, 20.0));
             let id = canvas.graph_mut().add_node(node);
             let original = serde_json::to_value(canvas.graph()).unwrap();
@@ -1555,6 +1624,21 @@ mod read_only_tests {
             canvas.set_read_only(false);
             canvas.handle_mouse_down(Position::new(80.0, 35.0), false, false, cx);
             assert_eq!(canvas.state.mode, InteractionMode::DraggingNodes);
+            canvas.graph_mut().add_node(WorkflowNodeData::new(
+                "Last stage",
+                Position::new(600.0, 350.0),
+            ));
+            canvas.state.viewport.size = (320.0, 240.0);
+            assert!(canvas.fit_to_view(cx));
+            let viewport = *canvas.viewport();
+            for node in canvas.graph().nodes.values() {
+                let top_left = viewport.canvas_to_screen(&node.position);
+                assert!(top_left.x >= 15.9 && top_left.y >= 15.9);
+                assert!(top_left.x + node.width * viewport.zoom <= 304.1);
+                assert!(top_left.y + node.height * viewport.zoom <= 224.1);
+            }
+            canvas.state.viewport.size = (0.0, 240.0);
+            assert!(!canvas.fit_to_view(cx));
         });
     }
 }
