@@ -1,6 +1,6 @@
 [package]
 name = "gpui-au"
-version = "0.10.44"
+version = "0.11.0"
 edition = "2024"
 repository.workspace = true
 keywords.workspace = true
@@ -55,7 +55,7 @@ uuid = { workspace = true, features = ["v5"] }
 env_logger = { workspace = true }
 
 [dev-dependencies]
-gpui = { version = "0.2.3",  package = "sotf-gpui-toolkit-gpui", git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
 
 # Apple-only deps (Objective-C runtime, Apple frameworks, font-kit)
 [target.'cfg(target_os = "macos")'.dependencies]

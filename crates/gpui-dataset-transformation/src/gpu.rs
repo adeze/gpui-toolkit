@@ -11,7 +11,7 @@
 // Rust guideline compliant 2026-02-21
 
 use crate::TransformError;
-use gpui_mesh::{Association, CellType, DataSet, Field};
+use gpui_mesh::{Association, DataSet, Field};
 use std::sync::Arc;
 
 /// WGSL per-tetrahedron Jacobian kernel (one invocation per tetrahedron).
@@ -41,14 +41,15 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let m = mat3x3<f32>(p1 - p0, p2 - p0, p3 - p0);
     let det = determinant(m);
     let base = tet_index * 9u;
-    if (abs(det) < 1e-20) {
+    if (!(abs(det) >= 1e-20 && abs(det) <= 3.402823e38) ||
+        velocities[nodes.x].w == 0.0 || velocities[nodes.y].w == 0.0 ||
+        velocities[nodes.z].w == 0.0 || velocities[nodes.w].w == 0.0) {
         for (var i: u32 = 0u; i < 9u; i = i + 1u) {
             jacobians[base + i] = 0.0;
         }
         volumes[tet_index] = 0.0;
         return;
     }
-    volumes[tet_index] = abs(det) / 6.0;
     // (M^-1)^T via the adjugate: columns are pairwise cross products of
     // the edge columns. WGSL has no matrix inverse builtin.
     let inv_t = mat3x3<f32>(
@@ -57,6 +58,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         cross(m[0], m[1]) / det,
     );
     let v0 = velocities[nodes.x].xyz;
+    var supported = true;
     for (var component: u32 = 0u; component < 3u; component = component + 1u) {
         let dv = vec3<f32>(
             velocities[nodes.y][component] - v0[component],
@@ -64,10 +66,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             velocities[nodes.w][component] - v0[component],
         );
         let g = inv_t * dv;
+        supported = supported && all(abs(g) <= vec3<f32>(3.402823e38));
         jacobians[base + component * 3u + 0u] = g.x;
         jacobians[base + component * 3u + 1u] = g.y;
         jacobians[base + component * 3u + 2u] = g.z;
     }
+    volumes[tet_index] = select(0.0, abs(det) / 6.0, supported);
 }
 ";
 
@@ -85,25 +89,52 @@ pub enum GpuError {
     Readback(String),
 }
 
-fn tetrahedralize(kind: CellType, n: &[u32]) -> Vec<[u32; 4]> {
-    match kind {
-        CellType::Tetra => vec![[n[0], n[1], n[2], n[3]]],
-        CellType::Hexahedron => vec![
-            [n[0], n[1], n[2], n[6]],
-            [n[0], n[2], n[3], n[6]],
-            [n[0], n[3], n[7], n[6]],
-            [n[0], n[7], n[4], n[6]],
-            [n[0], n[4], n[5], n[6]],
-            [n[0], n[5], n[1], n[6]],
-        ],
-        CellType::Wedge => vec![
-            [n[0], n[1], n[2], n[3]],
-            [n[1], n[2], n[3], n[4]],
-            [n[2], n[3], n[4], n[5]],
-        ],
-        CellType::Pyramid => vec![[n[0], n[1], n[2], n[4]], [n[0], n[2], n[3], n[4]]],
-        _ => Vec::new(),
+use gpui_mesh::tetrahedra as tetrahedralize;
+
+fn packed_velocities(field: &Field, vectors: &[[f64; 3]]) -> Result<Vec<[f32; 4]>, TransformError> {
+    vectors
+        .iter()
+        .enumerate()
+        .map(|(index, vector)| {
+            let valid = field.valid.as_ref().is_none_or(|mask| mask[index]);
+            if vector
+                .iter()
+                .any(|v| v.is_infinite() || (valid && v.is_nan()))
+            {
+                return Err(TransformError::Degenerate(format!(
+                    "velocity {index} is nonfinite without valid masking"
+                )));
+            }
+            if !valid {
+                return Ok([0.0; 4]);
+            }
+            let packed = [vector[0] as f32, vector[1] as f32, vector[2] as f32, 1.0];
+            if packed.iter().any(|v| !v.is_finite()) {
+                return Err(TransformError::Degenerate(format!(
+                    "velocity {index} cannot be represented by GPU f32; use CPU diagnostics"
+                )));
+            }
+            Ok(packed)
+        })
+        .collect()
+}
+
+fn append_diagnostics(
+    dataset: &DataSet,
+    fields: [(Field, &str, &str); 3],
+    supported: impl Fn(usize) -> bool,
+) -> DataSet {
+    let mut result = dataset.clone();
+    for (mut field, label, unit) in fields {
+        field.label = label.into();
+        field.unit = Some(unit.into());
+        let field = crate::validity::finish(field, &supported);
+        result
+            .point_data
+            .retain(|existing| existing.name != field.name);
+        result.point_data.push(field);
     }
+    result
 }
 
 /// A retained wgpu compute context for flow diagnostics.
@@ -185,6 +216,9 @@ impl GpuFlow {
     }
 
     /// Computes per-point velocity Jacobians on the GPU.
+    /// Unsupported points return NaN components. Each contributing tetrahedron
+    /// requires four valid velocity samples. Unrepresentable f32 inputs error;
+    /// callers can use CPU diagnostics for those datasets.
     ///
     /// # Errors
     ///
@@ -195,6 +229,7 @@ impl GpuFlow {
         dataset: &DataSet,
         field_name: &str,
     ) -> Result<Vec<[[f64; 3]; 3]>, TransformError> {
+        dataset.validate()?;
         let field = dataset
             .field(Association::Point, field_name)
             .ok_or_else(|| TransformError::FieldNotFound(field_name.to_string()))?;
@@ -230,10 +265,12 @@ impl GpuFlow {
                 ]
             })
             .collect();
-        let velocities: Vec<[f32; 4]> = vectors
-            .iter()
-            .map(|v| [v[0] as f32, v[1] as f32, v[2] as f32, 0.0])
-            .collect();
+        if positions.iter().flatten().any(|v| !v.is_finite()) {
+            return Err(TransformError::Degenerate(
+                "local positions cannot be represented by GPU f32; use CPU diagnostics".into(),
+            ));
+        }
+        let velocities = packed_velocities(field, vectors)?;
         let (jacobians, volumes) = self
             .run_kernel(&positions, &velocities, &tets)
             .map_err(|e| TransformError::Degenerate(e.to_string()))?;
@@ -242,7 +279,7 @@ impl GpuFlow {
         let mut acc = vec![([[0.0f64; 3]; 3], 0.0f64); dataset.point_count()];
         for (index, tet) in tets.iter().enumerate() {
             let volume = f64::from(volumes[index]);
-            if volume <= 0.0 {
+            if !volume.is_finite() || volume <= 0.0 {
                 continue;
             }
             for &node in tet {
@@ -258,12 +295,14 @@ impl GpuFlow {
         Ok(acc
             .into_iter()
             .map(|(mut jac, volume)| {
-                if volume > 0.0 {
+                if volume > 0.0 && volume.is_finite() {
                     for row in &mut jac {
                         for value in row.iter_mut() {
                             *value /= volume;
                         }
                     }
+                } else {
+                    jac = [[f64::NAN; 3]; 3];
                 }
                 jac
             })
@@ -305,15 +344,15 @@ impl GpuFlow {
                 0.5 * (omega2 - strain2)
             })
             .collect();
-        let mut result = dataset.clone();
-        result
-            .point_data
-            .push(Field::vector("vorticity", vorticity));
-        result.point_data.push(Field::scalar("q_criterion", q));
-        result
-            .point_data
-            .push(Field::scalar("divergence", divergence));
-        Ok(result)
+        Ok(append_diagnostics(
+            dataset,
+            [
+                (Field::vector("vorticity", vorticity), "Vorticity", "1/s"),
+                (Field::scalar("q_criterion", q), "Q-criterion", "1/s^2"),
+                (Field::scalar("divergence", divergence), "Divergence", "1/s"),
+            ],
+            |point| jacobian[point].iter().flatten().all(|v| v.is_finite()),
+        ))
     }
 
     fn run_kernel(
@@ -475,7 +514,7 @@ mod tests {
 
     #[test]
     fn gpu_matches_cpu_on_solid_rotation_when_available() {
-        let Ok(gpu) = GpuFlow::new() else {
+        let Some(gpu) = test_gpu() else {
             // No adapter on this host; CPU remains the reference path.
             return;
         };
@@ -538,9 +577,10 @@ fn tet_jacobian(nodes: vec4<u32>, inv_volume_sum: ptr<function, f32>) -> mat3x3<
     let p3 = positions[nodes.w].xyz;
     let m = mat3x3<f32>(p1 - p0, p2 - p0, p3 - p0);
     let det = determinant(m);
-    let volume = abs(det) / 6.0;
-    *inv_volume_sum = volume;
-    if (abs(det) < 1e-20) {
+    *inv_volume_sum = 0.0;
+    if (!(abs(det) >= 1e-20 && abs(det) <= 3.402823e38) ||
+        velocities[nodes.x].w == 0.0 || velocities[nodes.y].w == 0.0 ||
+        velocities[nodes.z].w == 0.0 || velocities[nodes.w].w == 0.0) {
         return mat3x3<f32>(vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0));
     }
     let inv_t = mat3x3<f32>(
@@ -557,8 +597,12 @@ fn tet_jacobian(nodes: vec4<u32>, inv_volume_sum: ptr<function, f32>) -> mat3x3<
             velocities[nodes.w][component] - v0[component],
         );
         let g = inv_t * dv;
+        if (!all(abs(g) <= vec3<f32>(3.402823e38))) {
+            return mat3x3<f32>(vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0));
+        }
         jac[component] = g;
     }
+    *inv_volume_sum = abs(det) / 6.0;
     return jac;
 }
 
@@ -593,7 +637,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         j[2][1] - j[1][2],
         j[0][2] - j[2][0],
         j[1][0] - j[0][1],
-        0.0,
+        select(0.0, 1.0, total_volume > 0.0 && total_volume <= 3.402823e38 &&
+            all(abs(j[0]) <= vec3<f32>(3.402823e38)) &&
+            all(abs(j[1]) <= vec3<f32>(3.402823e38)) &&
+            all(abs(j[2]) <= vec3<f32>(3.402823e38))),
     );
     divergence[point] = j[0][0] + j[1][1] + j[2][2];
     var omega2 = 0.0;
@@ -623,6 +670,7 @@ pub struct PreparedFlow {
     queue: Arc<wgpu::Queue>,
     pipeline: wgpu::ComputePipeline,
     base: DataSet,
+    velocity_field: usize,
     velocities_buffer: wgpu::Buffer,
     vorticity_buffer: wgpu::Buffer,
     q_buffer: wgpu::Buffer,
@@ -637,8 +685,16 @@ impl PreparedFlow {
     /// # Errors
     ///
     /// Returns an error when the field is missing, not a vector field, or
-    /// the dataset holds no volume cells.
+    /// the dataset is invalid, holds no volume cells, or the input name
+    /// conflicts with a diagnostic output name.
     pub fn new(gpu: &GpuFlow, dataset: &DataSet, field_name: &str) -> Result<Self, TransformError> {
+        dataset.validate()?;
+        if matches!(field_name, "vorticity" | "q_criterion" | "divergence") {
+            return Err(TransformError::WrongFieldShape {
+                field: field_name.into(),
+                reason: "input name conflicts with diagnostic output".into(),
+            });
+        }
         let field = dataset
             .field(Association::Point, field_name)
             .ok_or_else(|| TransformError::FieldNotFound(field_name.to_string()))?;
@@ -648,6 +704,11 @@ impl PreparedFlow {
                 field: field_name.to_string(),
                 reason: "GPU flow diagnostics require a 3-vector field".into(),
             })?;
+        let velocity_field = dataset
+            .point_data
+            .iter()
+            .position(|field| field.name.as_ref() == field_name)
+            .ok_or_else(|| TransformError::FieldNotFound(field_name.into()))?;
         let mut tets: Vec<[u32; 4]> = Vec::new();
         for cell in 0..dataset.cell_count() {
             let kind = dataset.cells.types[cell];
@@ -688,10 +749,12 @@ impl PreparedFlow {
                 ]
             })
             .collect();
-        let velocities: Vec<[f32; 4]> = vectors
-            .iter()
-            .map(|v| [v[0] as f32, v[1] as f32, v[2] as f32, 0.0])
-            .collect();
+        if positions.iter().flatten().any(|v| !v.is_finite()) {
+            return Err(TransformError::Degenerate(
+                "local positions cannot be represented by GPU f32; use CPU diagnostics".into(),
+            ));
+        }
+        let velocities = packed_velocities(field, vectors)?;
 
         let device = gpu.device.clone();
         let queue = gpu.queue.clone();
@@ -829,6 +892,7 @@ impl PreparedFlow {
             queue,
             pipeline,
             base: dataset.clone(),
+            velocity_field,
             velocities_buffer,
             vorticity_buffer,
             q_buffer,
@@ -842,11 +906,16 @@ impl PreparedFlow {
     ///
     /// When `velocities` is provided it replaces the prepared field
     /// (same point count); the geometry upload is never repeated.
+    /// The prepared validity mask is retained. Masked nodes stay missing until
+    /// a new problem is prepared; updates may contain NaNs only at masked nodes.
     ///
     /// # Errors
     ///
     /// Returns an error when GPU execution or readback fails.
-    pub fn diagnostics(&self, velocities: Option<&[[f64; 3]]>) -> Result<DataSet, TransformError> {
+    pub fn diagnostics(
+        &mut self,
+        velocities: Option<&[[f64; 3]]>,
+    ) -> Result<DataSet, TransformError> {
         if let Some(values) = velocities {
             if values.len() != self.point_count {
                 return Err(TransformError::Degenerate(format!(
@@ -855,12 +924,13 @@ impl PreparedFlow {
                     self.point_count
                 )));
             }
-            let flat: Vec<[f32; 4]> = values
-                .iter()
-                .map(|v| [v[0] as f32, v[1] as f32, v[2] as f32, 0.0])
-                .collect();
+            let flat = packed_velocities(&self.base.point_data[self.velocity_field], values)?;
             self.queue
                 .write_buffer(&self.velocities_buffer, 0, bytemuck::cast_slice(&flat));
+            // Commit the same input revision used by subsequent GPU dispatches,
+            // including a later diagnostics(None). Clones share this Arc.
+            self.base.point_data[self.velocity_field].data =
+                gpui_mesh::FieldData::Vector(values.into());
         }
         let mut encoder = self
             .device
@@ -915,22 +985,29 @@ impl PreparedFlow {
             .iter()
             .map(|c| [f64::from(c[0]), f64::from(c[1]), f64::from(c[2])])
             .collect();
-        let mut result = self.base.clone();
-        result
-            .point_data
-            .retain(|f| !matches!(f.name.as_ref(), "vorticity" | "q_criterion" | "divergence"));
-        result
-            .point_data
-            .push(Field::vector("vorticity", vorticity));
-        result.point_data.push(Field::scalar(
-            "q_criterion",
-            q.iter().map(|v| f64::from(*v)).collect::<Vec<_>>(),
-        ));
-        result.point_data.push(Field::scalar(
-            "divergence",
-            divergence.iter().map(|v| f64::from(*v)).collect::<Vec<_>>(),
-        ));
-        Ok(result)
+        Ok(append_diagnostics(
+            &self.base,
+            [
+                (Field::vector("vorticity", vorticity), "Vorticity", "1/s"),
+                (
+                    Field::scalar(
+                        "q_criterion",
+                        q.iter().map(|v| f64::from(*v)).collect::<Vec<_>>(),
+                    ),
+                    "Q-criterion",
+                    "1/s^2",
+                ),
+                (
+                    Field::scalar(
+                        "divergence",
+                        divergence.iter().map(|v| f64::from(*v)).collect::<Vec<_>>(),
+                    ),
+                    "Divergence",
+                    "1/s",
+                ),
+            ],
+            |point| vorticity_flat[point * 4 + 3] > 0.0,
+        ))
     }
 
     fn readback_buffer(&self, size: u64, label: &str) -> wgpu::Buffer {
@@ -950,7 +1027,7 @@ mod prepared_tests {
 
     #[test]
     fn prepared_flow_matches_cpu_and_updates() {
-        let Ok(gpu) = GpuFlow::new() else {
+        let Some(gpu) = test_gpu() else {
             return;
         };
         let mut ds = DataSet::structured_grid("g", [4, 4, 4], [-1.0; 3], [0.5; 3]).unwrap();
@@ -960,7 +1037,7 @@ mod prepared_tests {
             .map(|p| [-2.0 * p[1], 2.0 * p[0], 0.0])
             .collect();
         ds.point_data.push(Field::vector("velocity", velocity));
-        let prepared = PreparedFlow::new(&gpu, &ds, "velocity").unwrap();
+        let mut prepared = PreparedFlow::new(&gpu, &ds, "velocity").unwrap();
         let out = prepared.diagnostics(None).unwrap();
         let vorticity = out
             .field(Association::Point, "vorticity")
@@ -982,5 +1059,64 @@ mod prepared_tests {
             .as_scalar()
             .unwrap();
         assert!(q.iter().all(|v| v.abs() < 1e-6));
+        assert_eq!(
+            updated
+                .field(Association::Point, "velocity")
+                .unwrap()
+                .as_vector()
+                .unwrap(),
+            zeros
+        );
+        let repeated = prepared.diagnostics(None).unwrap();
+        assert_eq!(
+            repeated
+                .field(Association::Point, "velocity")
+                .unwrap()
+                .as_vector()
+                .unwrap(),
+            zeros
+        );
+        let cpu = crate::q_criterion(&repeated, "velocity", "q_cpu").unwrap();
+        assert!(
+            cpu.field(Association::Point, "q_cpu")
+                .unwrap()
+                .as_scalar()
+                .unwrap()
+                .iter()
+                .all(|q| q.abs() < 1e-6)
+        );
+        prepared.diagnostics(Some(&zeros[..1])).unwrap_err();
+        let restored = prepared
+            .diagnostics(Some(
+                ds.field(Association::Point, "velocity")
+                    .unwrap()
+                    .as_vector()
+                    .unwrap(),
+            ))
+            .unwrap();
+        assert!(
+            restored
+                .field(Association::Point, "vorticity")
+                .unwrap()
+                .as_vector()
+                .unwrap()
+                .iter()
+                .all(|v| (v[2] - 4.0).abs() < 1e-2)
+        );
+    }
+}
+
+#[cfg(test)]
+fn test_gpu() -> Option<GpuFlow> {
+    match GpuFlow::new() {
+        Ok(gpu) => {
+            eprintln!("flow test GPU backend: {}", gpu.backend);
+            Some(gpu)
+        }
+        Err(GpuError::NoAdapter) if std::env::var_os("GPUI_REQUIRE_GPU").is_none() => {
+            eprintln!("SKIP: flow GPU tests: no adapter");
+            None
+        }
+        Err(error) => panic!("flow GPU initialization failed: {error}"),
     }
 }

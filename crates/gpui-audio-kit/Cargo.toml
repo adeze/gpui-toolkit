@@ -1,6 +1,6 @@
 [package]
 name = "gpui-audio-kit"
-version = "0.10.44"
+version = "0.11.0"
 authors.workspace = true
 edition.workspace = true
 keywords.workspace = true
@@ -32,9 +32,9 @@ gpui-ui-kit = { workspace = true }
 web-time = "1.1"
 
 [dev-dependencies]
-gpui = { version = "0.2.3",  package = "sotf-gpui-toolkit-gpui", git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", features = ["test-support"] }
-gpui-miniapp = { path = "../gpui-miniapp" }
-gpui-profiler = { path = "../gpui-profiler", features = ["global-allocator"] }
+gpui = { workspace = true, features = ["test-support"] }
+gpui-miniapp = { path = "../gpui-miniapp", version = "0.11" }
+gpui-profiler = { path = "../gpui-profiler", version = "0.11", features = ["global-allocator"] }
 
 [lib]
 name = "gpui_audio_kit"

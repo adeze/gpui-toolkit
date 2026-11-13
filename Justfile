@@ -79,7 +79,8 @@ alias tests := ntest
 
 [group('test')]
 ntest:
-	{{cargo}} nextest run --profile ci --release --no-fail-fast --workspace {{features}}
+	# GPUI's test selectors require debug assertions; use Cargo's test profile.
+	{{cargo}} nextest run --profile ci --no-fail-fast --workspace {{features}}
 
 [group('qa')]
 qa-miri:
@@ -218,13 +219,13 @@ qa-python-rustdoc-inventory:
 	python3 scripts/generate_python_capabilities.py --check
 
 # Public release contract. Registry wave 1 deliberately contains only the
-# two GPUI-free packages pass a locked package verification.
+# two GPUI-free packages, which pass package verification.
 [group('qa')]
 qa-release-contract: qa-api
-	{{cargo}} package --locked -p gpui-profiler
-	{{cargo}} package --locked -p gpui-ui-kit-macros
+	{{cargo}} package -p gpui-profiler
+	{{cargo}} package -p gpui-ui-kit-macros
 
-# Build release assets locally and offline. This never tags, pushes, publishes,
+# Build release assets locally. This never tags, pushes, publishes,
 # signs, or uploads; those remain explicit maintainer actions.
 [group('release')]
 release-rc version:
@@ -323,11 +324,8 @@ qa-mesh-expanded-visual:
 [group('qa')]
 qa-cov:
 	mkdir -p target/qa/cov
-	# gpui_macos clipboard tests require a live pasteboard service and are not
-	# part of the measured source set; keep them out of the portable coverage
-	# lane while retaining their separate host QA gate.
-	{{cargo}} llvm-cov --workspace --exclude gpui-scaffolder --exclude gpui_macos --all-targets --html --output-dir target/qa/cov/html {{features}} --ignore-filename-regex '{{cov_ignore_regex}}'
-	{{cargo}} llvm-cov --workspace --exclude gpui-scaffolder --exclude gpui_macos --all-targets --json --summary-only --output-path {{cov_summary}} {{features}} --ignore-filename-regex '{{cov_ignore_regex}}'
+	{{cargo}} llvm-cov --workspace --exclude gpui-scaffolder --all-targets --html --output-dir target/qa/cov/html {{features}} --ignore-filename-regex '{{cov_ignore_regex}}'
+	{{cargo}} llvm-cov --workspace --exclude gpui-scaffolder --all-targets --json --summary-only --output-path {{cov_summary}} {{features}} --ignore-filename-regex '{{cov_ignore_regex}}'
 	@echo "Coverage report: target/qa/cov/html/index.html"
 
 # Open the HTML coverage report (macOS).
@@ -340,7 +338,7 @@ qa-cov-html: qa-cov
 qa-cov-check:
 	@echo "Running coverage gate (threshold {{cov_threshold}}%)..."
 	mkdir -p target/qa/cov
-	{{cargo}} llvm-cov --workspace --exclude gpui-scaffolder --exclude gpui_macos --all-targets --json --summary-only --output-path {{cov_summary}} {{features}} --ignore-filename-regex '{{cov_ignore_regex}}'
+	{{cargo}} llvm-cov --workspace --exclude gpui-scaffolder --all-targets --json --summary-only --output-path {{cov_summary}} {{features}} --ignore-filename-regex '{{cov_ignore_regex}}'
 	python3 scripts/qa_cov_check.py --summary {{cov_summary}} --threshold {{cov_threshold}} --output {{cov_report}} --ignore-regex '{{cov_ignore_regex}}'
 
 # Update the committed performance baseline. Run intentionally after benchmarking.

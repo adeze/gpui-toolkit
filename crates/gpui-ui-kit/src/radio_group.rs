@@ -14,7 +14,8 @@ use crate::accessibility::{
 use crate::theme::ThemeExt;
 use crate::{ComponentTheme, ComponentVariant};
 use gpui::prelude::{
-    InteractiveElement, IntoElement, ParentElement, RenderOnce, StatefulInteractiveElement, Styled,
+    FluentBuilder, InteractiveElement, IntoElement, ParentElement, RenderOnce,
+    StatefulInteractiveElement, Styled,
 };
 use gpui::{
     App, Div, ElementId, FocusHandle, MouseButton, Pixels, Rgba, SharedString, Stateful, Window,
@@ -144,6 +145,7 @@ impl RadioOption {
 ///
 /// The parent owns `selected`; arrow keys move selection to the nearest
 /// enabled option in that direction.
+#[derive(gpui::IntoElement)]
 pub struct RadioGroup {
     id: ElementId,
     options: Vec<RadioOption>,
@@ -152,6 +154,7 @@ pub struct RadioGroup {
     orientation: RadioGroupOrientation,
     size: RadioGroupSize,
     disabled: bool,
+    wrap_labels: bool,
     design: Option<Arc<DesignSystem>>,
     on_change: Option<Box<dyn Fn(SharedString, &mut Window, &mut App) + 'static>>,
     aria_label: Option<SharedString>,
@@ -170,6 +173,7 @@ impl RadioGroup {
             orientation: RadioGroupOrientation::default(),
             size: RadioGroupSize::default(),
             disabled: false,
+            wrap_labels: false,
             design: None,
             on_change: None,
             aria_label: None,
@@ -218,6 +222,14 @@ impl RadioGroup {
     /// Disable the whole group.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    /// Allow option labels to wrap onto multiple lines.
+    ///
+    /// Defaults to false, preserving single-line truncation for compact controls.
+    pub fn wrap_labels(mut self, wrap: bool) -> Self {
+        self.wrap_labels = wrap;
         self
     }
 
@@ -364,9 +376,10 @@ impl RadioGroup {
                     div()
                         .flex_1()
                         .min_w_0()
-                        .overflow_hidden()
-                        .text_ellipsis()
-                        .whitespace_nowrap()
+                        .when(!self.wrap_labels, |label| {
+                            label.overflow_hidden().text_ellipsis().whitespace_nowrap()
+                        })
+                        .when(self.wrap_labels, gpui::Styled::whitespace_normal)
                         .text_color(if option_disabled {
                             theme.disabled_label
                         } else {
@@ -411,6 +424,15 @@ impl RadioGroup {
         {
             let options = self.options.clone();
             container = container.on_key_down(move |event, window, cx| {
+                if event.keystroke.key == "tab" {
+                    if event.keystroke.modifiers.shift {
+                        window.focus_prev(cx);
+                    } else {
+                        window.focus_next(cx);
+                    }
+                    cx.stop_propagation();
+                    return;
+                }
                 let direction = match event.keystroke.key.as_str() {
                     "up" | "left" => Some(-1),
                     "down" | "right" => Some(1),
@@ -486,14 +508,6 @@ impl RenderOnce for RadioGroup {
         let radio_theme = RadioGroupTheme::from(global_theme);
         let design = crate::design::resolve_design(this.design.clone(), cx);
         this.build_with_theme_and_design(&radio_theme, &design)
-    }
-}
-
-impl IntoElement for RadioGroup {
-    type Element = gpui::Component<Self>;
-
-    fn into_element(self) -> Self::Element {
-        gpui::Component::new(self)
     }
 }
 

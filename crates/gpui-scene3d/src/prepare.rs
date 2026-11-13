@@ -23,11 +23,16 @@ pub struct GpuChunk {
     pub positions: Vec<f32>,
     /// Smooth vertex normals, three per vertex.
     pub normals: Vec<f32>,
-    /// Scalar per vertex, aligned with `positions` (zeros when uncoloured).
+    /// Scalar coordinate per vertex, aligned with `positions` (zeros when uncolored).
+    /// Raw values unless [`Self::scalar_domain`] is set; NaN marks missing data.
     pub scalars: Vec<f32>,
+    /// Original linear domain when scalars encode unclamped domain coordinates.
+    /// `None` denotes raw values, or zeros for a flat material.
+    /// Use `[0, 1]` for the shader scalar range when this domain is present.
+    pub scalar_domain: Option<[f64; 2]>,
     /// Chunk-local triangle indices.
     pub indices: Vec<u32>,
-    /// Wireframe edge indices derived from `indices`, when requested.
+    /// Canonical unique wireframe edge pairs derived from `indices`, when requested.
     pub edges: Vec<u32>,
 }
 
@@ -56,16 +61,67 @@ impl GpuChunk {
 ///
 /// The boundary surface is extracted once per chunk budget, positions are
 /// rebased and converted, smooth normals are accumulated, and scalars are
-/// gathered per vertex (cell scalars are expanded by their owning point's
-/// first use; point scalars are gathered exactly).
+/// gathered per vertex. Cell values remain constant on their owner's triangles;
+/// vertices split only where converted scalar values disagree. Smooth geometric
+/// normals are preserved across those splits. Point scalars are gathered per vertex.
+/// Normal accumulation retries from source f64 edges when f32 arithmetic loses
+/// range; this temporary workspace adds eight bytes per position component.
+/// Positions and scalars still use f32 buffers; conversion is not lossless.
+/// Domains outside the raw f32 profile use unclamped linear scalar coordinates;
+/// map them with [`crate::PreparedTransfer::map_linear_position`]. The chunk
+/// records that source domain in [`GpuChunk::scalar_domain`].
 ///
 /// # Errors
 ///
-/// Returns [`SceneError::FieldNotFound`] when the actor's colouring field
-/// is missing or not scalar.
+/// Uses the default face-workspace limit from [`gpui_mesh::SurfaceExtractionLimits`].
+/// Returns a mesh error for invalid geometry, field storage or workspace limits, or
+/// [`SceneError::FieldNotFound`] for a missing or nonscalar coloring field.
+/// Returns allocation errors for reference-normal storage or unsupported precision
+/// when positions used by the reference calculation exceed the f32 buffer range.
+/// Invalid transfer settings and unrepresentable finite scalar coordinates return
+/// explicit errors; they are not converted to missing samples.
 pub fn prepare_chunks(actor: &Actor, max_triangles: usize) -> Result<Vec<GpuChunk>, SceneError> {
-    let dataset = &actor.dataset;
-    let origin = dataset.bounds().map_or([0.0; 3], |b| b.center());
+    prepare_chunks_with_bounds(actor, max_triangles).map(|(_, chunks)| chunks)
+}
+
+pub(crate) fn prepare_chunks_with_bounds(
+    actor: &Actor,
+    max_triangles: usize,
+) -> Result<(Option<gpui_mesh::Bounds>, Vec<GpuChunk>), SceneError> {
+    prepare_chunks_with_bounds_and_limits(
+        actor,
+        max_triangles,
+        gpui_mesh::SurfaceExtractionLimits::default(),
+    )
+}
+
+/// Prepares actor chunks within an explicit temporary face-workspace limit.
+///
+/// The limit excludes source data, chunk/output arrays and GPU residency. See
+/// [`gpui_mesh::SurfaceExtractionLimits`] for its exact scope. Other semantics
+/// match [`prepare_chunks`].
+///
+/// # Errors
+///
+/// Returns geometry/field errors, face workspace/allocation errors or a missing
+/// coloring field. A zero triangle budget is treated as one.
+pub fn prepare_chunks_with_limits(
+    actor: &Actor,
+    max_triangles: usize,
+    limits: gpui_mesh::SurfaceExtractionLimits,
+) -> Result<Vec<GpuChunk>, SceneError> {
+    prepare_chunks_with_bounds_and_limits(actor, max_triangles, limits).map(|(_, chunks)| chunks)
+}
+
+pub(crate) fn prepare_chunks_with_bounds_and_limits(
+    actor: &Actor,
+    max_triangles: usize,
+    limits: gpui_mesh::SurfaceExtractionLimits,
+) -> Result<(Option<gpui_mesh::Bounds>, Vec<GpuChunk>), SceneError> {
+    let checked = actor.dataset.validated()?;
+    let dataset = checked.as_dataset();
+    let bounds = dataset.bounds();
+    let origin = bounds.map_or([0.0; 3], |b| b.center());
     let scalar_lookup: Option<(Association, &[f64])> = if let Some(pair) = actor.scalars() {
         Some(pair)
     } else {
@@ -79,33 +135,48 @@ pub fn prepare_chunks(actor: &Actor, max_triangles: usize) -> Result<Vec<GpuChun
         }
         None
     };
-    // Cell scalars need triangle -> cell mapping; boundary extraction loses
-    // it, so expand cell values to points by averaging owning cells first.
-    let point_scalars: Option<Vec<f64>> = match scalar_lookup {
-        Some((Association::Point, values)) => Some(values.to_vec()),
-        Some((Association::Cell, values)) => {
-            let mut sums = vec![0.0f64; dataset.point_count()];
-            let mut counts = vec![0.0f64; dataset.point_count()];
-            for (cell, &value) in values.iter().enumerate() {
-                let Some(nodes) = dataset.cells.cell(cell) else {
-                    continue;
-                };
-                for &node in nodes {
-                    sums[node as usize] += value;
-                    counts[node as usize] += 1.0;
+    if dataset.cells.types.iter().all(|kind| kind.dimension() < 2) {
+        return Ok((bounds, Vec::new()));
+    }
+    let transport = crate::scalar::ScalarTransport::of(actor)?;
+    let valid = actor
+        .field
+        .as_ref()
+        .and_then(|(association, name)| dataset.field(*association, name))
+        .and_then(|field| field.valid.as_deref());
+    if let Some((Association::Cell, values)) = scalar_lookup {
+        let mut out = Vec::new();
+        // Cell splits may duplicate a global edge within one chunk as well as
+        // across chunks. The first emitted valid owner supplies its wire alpha.
+        let mut seen = actor.wireframe.then(std::collections::HashSet::new);
+        gpui_mesh::try_for_each_surface_chunk_with_limits(
+            checked,
+            max_triangles.clamp(1, DEFAULT_MAX_TRIANGLES),
+            limits,
+            |chunk, owners| {
+                if let Some(chunk) = cell_chunk(
+                    dataset,
+                    origin,
+                    chunk,
+                    owners,
+                    CellScalars {
+                        values,
+                        valid,
+                        transport,
+                    },
+                    seen.as_mut(),
+                )? {
+                    out.push(chunk);
                 }
-            }
-            Some(
-                sums.iter()
-                    .zip(counts.iter())
-                    .map(|(s, c)| if *c > 0.0 { s / c } else { 0.0 })
-                    .collect(),
-            )
-        }
-        None => None,
-    };
+                Ok::<(), SceneError>(())
+            },
+        )?;
+        return Ok((bounds, out));
+    }
+    let point_scalars = scalar_lookup.map(|(_, values)| values);
 
-    let chunks = gpui_mesh::surface_chunks(dataset, max_triangles.max(1));
+    let chunks = gpui_mesh::surface_chunks_with_limits(checked, max_triangles.max(1), limits)?;
+    let mut seen_edges = (actor.wireframe && chunks.len() > 1).then(std::collections::HashSet::new);
     let mut out = Vec::with_capacity(chunks.len());
     for chunk in chunks {
         let vertex_count = chunk.point_ids.len();
@@ -117,12 +188,35 @@ pub fn prepare_chunks(actor: &Actor, max_triangles: usize) -> Result<Vec<GpuChun
             positions.push((p[1] - origin[1]) as f32);
             positions.push((p[2] - origin[2]) as f32);
             if let Some(values) = &point_scalars {
-                scalars[local] = values[point as usize] as f32;
+                let invalid = matches!(scalar_lookup, Some((Association::Point, _)))
+                    && valid.is_some_and(|mask| !mask[point as usize]);
+                let value = values[point as usize];
+                scalars[local] = if invalid || !value.is_finite() {
+                    f32::NAN
+                } else {
+                    transport.pack(value)?
+                };
             }
         }
-        let normals = smooth_normals(&positions, &chunk.indices);
+        let mut indices = chunk.indices;
+        // Reject triangles touching missing samples before either backend.
+        // GPU correctness must not depend on NaN interpolation/fast-math rules.
+        if scalars.iter().any(|value| !value.is_finite()) {
+            let mut write = 0;
+            for read in (0..indices.len()).step_by(3) {
+                if indices[read..read + 3]
+                    .iter()
+                    .all(|&index| scalars[index as usize].is_finite())
+                {
+                    indices.copy_within(read..read + 3, write);
+                    write += 3;
+                }
+            }
+            indices.truncate(write);
+        }
+        let normals = smooth_normals(dataset, &chunk.point_ids, &positions, &indices)?;
         let edges = if actor.wireframe {
-            wireframe_edges(&chunk.indices)
+            wireframe_edges(&indices, &chunk.point_ids, seen_edges.as_mut())
         } else {
             Vec::new()
         };
@@ -131,16 +225,145 @@ pub fn prepare_chunks(actor: &Actor, max_triangles: usize) -> Result<Vec<GpuChun
             positions,
             normals,
             scalars,
-            indices: chunk.indices,
+            scalar_domain: transport.domain(),
+            indices,
             edges,
         });
     }
-    Ok(out)
+    Ok((bounds, out))
 }
 
-fn smooth_normals(positions: &[f32], indices: &[u32]) -> Vec<f32> {
+struct CellScalars<'a> {
+    values: &'a [f64],
+    valid: Option<&'a [bool]>,
+    transport: crate::scalar::ScalarTransport,
+}
+
+fn cell_chunk(
+    dataset: &gpui_mesh::DataSet,
+    origin: [f64; 3],
+    mut chunk: gpui_mesh::SurfaceChunk,
+    owners: &[usize],
+    scalar_input: CellScalars<'_>,
+    seen_edges: Option<&mut std::collections::HashSet<u64>>,
+) -> Result<Option<GpuChunk>, SceneError> {
+    let CellScalars {
+        values,
+        valid,
+        transport,
+    } = scalar_input;
+    let valid_cell = |cell: usize| valid.is_none_or(|mask| mask[cell]) && values[cell].is_finite();
+    if !owners.iter().any(|&cell| valid_cell(cell)) {
+        return Ok(None);
+    }
+    let mut scalars = vec![f32::NAN; chunk.point_ids.len()];
+    for (tri, &cell) in chunk.indices.as_chunks::<3>().0.iter().zip(owners) {
+        if valid_cell(cell) {
+            let packed = transport.pack(values[cell])?;
+            for &point in tri {
+                let scalar = &mut scalars[point as usize];
+                if scalar.is_nan() {
+                    *scalar = packed;
+                }
+            }
+        }
+    }
+    let mut positions = Vec::with_capacity(chunk.point_ids.len() * 3);
+    for &point in &chunk.point_ids {
+        let p = dataset.positions[point as usize];
+        positions.extend((0..3).map(|axis| (p[axis] - origin[axis]) as f32));
+    }
+    let mut normals = smooth_normals_for(
+        dataset,
+        &chunk.point_ids,
+        &positions,
+        chunk
+            .indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(owners)
+            .filter(|(_, cell)| valid_cell(**cell))
+            .map(|(tri, _)| *tri),
+    )?;
+    // Reuse the ordinary vertices for their first scalar. Only discontinuities
+    // need a map entry and appended position/normal/scalar storage.
+    let mut splits = std::collections::HashMap::<(u32, u32), u32>::new();
+    let wireframe = seen_edges.is_some();
+    let mut write = 0;
+    for (read, &cell) in owners.iter().enumerate() {
+        if !valid_cell(cell) {
+            continue;
+        }
+        let scalar = transport.pack(values[cell])?;
+        let tri = [
+            chunk.indices[read * 3],
+            chunk.indices[read * 3 + 1],
+            chunk.indices[read * 3 + 2],
+        ];
+        for point in tri {
+            let local = point as usize;
+            let id = if scalars[local].to_bits() == scalar.to_bits() {
+                point
+            } else {
+                *splits.entry((point, scalar.to_bits())).or_insert_with(|| {
+                    let id = u32::try_from(scalars.len()).expect("chunk vertex bound");
+                    positions.extend_from_within(local * 3..local * 3 + 3);
+                    normals.extend_from_within(local * 3..local * 3 + 3);
+                    scalars.push(scalar);
+                    if wireframe {
+                        chunk.point_ids.push(chunk.point_ids[local]);
+                    }
+                    id
+                })
+            };
+            chunk.indices[write] = id;
+            write += 1;
+        }
+    }
+    chunk.indices.truncate(write);
+    chunk.indices.shrink_to_fit();
+    positions.shrink_to_fit();
+    normals.shrink_to_fit();
+    scalars.shrink_to_fit();
+    let edges = if wireframe {
+        wireframe_edges(&chunk.indices, &chunk.point_ids, seen_edges)
+    } else {
+        Vec::new()
+    };
+    Ok(Some(GpuChunk {
+        origin,
+        positions,
+        normals,
+        scalars,
+        scalar_domain: transport.domain(),
+        indices: chunk.indices,
+        edges,
+    }))
+}
+
+fn smooth_normals(
+    dataset: &gpui_mesh::DataSet,
+    point_ids: &[u32],
+    positions: &[f32],
+    indices: &[u32],
+) -> Result<Vec<f32>, SceneError> {
+    smooth_normals_for(
+        dataset,
+        point_ids,
+        positions,
+        indices.as_chunks::<3>().0.iter().copied(),
+    )
+}
+
+fn smooth_normals_for(
+    dataset: &gpui_mesh::DataSet,
+    point_ids: &[u32],
+    positions: &[f32],
+    triangles: impl Iterator<Item = [u32; 3]> + Clone,
+) -> Result<Vec<f32>, SceneError> {
     let mut normals = vec![0.0f32; positions.len()];
-    for tri in indices.as_chunks::<3>().0 {
+    for tri in triangles.clone() {
         let [ia, ib, ic] = [tri[0] as usize, tri[1] as usize, tri[2] as usize];
         let a = [
             positions[ia * 3],
@@ -170,29 +393,285 @@ fn smooth_normals(positions: &[f32], indices: &[u32]) -> Vec<f32> {
             normals[i * 3 + 2] += n[2];
         }
     }
+    let mut needs_reference = 0u32;
+    let mut has_zero = 0u32;
     for n in normals.as_chunks_mut::<3>().0 {
-        let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+        let squared = n[0] * n[0] + n[1] * n[1] + n[2] * n[2];
+        // Defer the retry branch until after this small arithmetic loop so
+        // ordinary normalization remains amenable to vectorization.
+        let nonzero = u32::from(*n != [0.0; 3]);
+        needs_reference |= u32::from(!squared.is_normal()) & nonzero;
+        has_zero |= 1 - nonzero;
+        let len = squared.sqrt();
         if len > 0.0 {
             n[0] /= len;
             n[1] /= len;
             n[2] /= len;
         }
     }
-    normals
+    // Zero accumulated normals can hide a nondegenerate source face. Check
+    // those vertices after accumulation, keeping this rare source inspection
+    // out of the ordinary per-face loop.
+    let lost_face = has_zero != 0
+        && triangles.clone().any(|tri| {
+            tri.iter().any(|&i| {
+                let i = i as usize * 3;
+                normals[i..i + 3] == [0.0; 3]
+            }) && face_normal_f64(dataset, point_ids, tri) != [0.0; 3]
+        });
+    if needs_reference != 0 || lost_face {
+        // Recompute all contributions to preserve area weighting, including
+        // vertices normalized earlier in this speculative f32 pass.
+        return reference_normals(dataset, point_ids, positions, triangles, normals);
+    }
+    Ok(normals)
 }
 
-fn wireframe_edges(indices: &[u32]) -> Vec<u32> {
-    let mut edges = Vec::with_capacity(indices.len() * 2);
-    for tri in indices.as_chunks::<3>().0 {
-        edges.extend_from_slice(&[tri[0], tri[1], tri[1], tri[2], tri[2], tri[0]]);
+fn face_normal_f64(dataset: &gpui_mesh::DataSet, point_ids: &[u32], tri: [u32; 3]) -> [f64; 3] {
+    let [a, b, c] = tri.map(|i| dataset.positions[point_ids[i as usize] as usize]);
+    let ab: [f64; 3] = std::array::from_fn(|axis| b[axis] - a[axis]);
+    let ac: [f64; 3] = std::array::from_fn(|axis| c[axis] - a[axis]);
+    [
+        ab[1] * ac[2] - ab[2] * ac[1],
+        ab[2] * ac[0] - ab[0] * ac[2],
+        ab[0] * ac[1] - ab[1] * ac[0],
+    ]
+}
+
+fn reference_normals(
+    dataset: &gpui_mesh::DataSet,
+    point_ids: &[u32],
+    positions: &[f32],
+    triangles: impl Iterator<Item = [u32; 3]>,
+    mut normals: Vec<f32>,
+) -> Result<Vec<f32>, SceneError> {
+    // Use source edges: subtracting the chunk origin and converting to f32 can
+    // collapse a tiny face next to a large one. Representable rebased positions
+    // bound source edge products well inside f64 range. Only unusual scales
+    // allocate this workspace; ordinary output arithmetic stays unchanged.
+    if positions.iter().any(|value| !value.is_finite()) {
+        return Err(SceneError::UnsupportedPrecision(
+            "surface positions exceed the f32 geometry range",
+        ));
     }
-    edges
+    let mut sums = crate::limits::frame_buffer(positions.len(), 0.0f64)?;
+    for tri in triangles {
+        let n = face_normal_f64(dataset, point_ids, tri);
+        for i in tri {
+            for axis in 0..3 {
+                sums[i as usize * 3 + axis] += n[axis];
+            }
+        }
+    }
+    for (sum, normal) in sums
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(normals.as_chunks_mut::<3>().0)
+    {
+        let squared = sum[0] * sum[0] + sum[1] * sum[1] + sum[2] * sum[2];
+        *normal = if squared.is_normal() {
+            let length = squared.sqrt();
+            sum.map(|v| (v / length) as f32)
+        } else {
+            // Source edges may be smaller than the converted positions. Keep
+            // their nonzero area direction when squaring it would underflow.
+            // The source cross products themselves still have finite precision.
+            let scale = sum.iter().map(|v| v.abs()).fold(0.0, f64::max);
+            if scale == 0.0 {
+                [0.0; 3]
+            } else {
+                let scaled = sum.map(|v| v / scale);
+                let length =
+                    (scaled[0] * scaled[0] + scaled[1] * scaled[1] + scaled[2] * scaled[2]).sqrt();
+                scaled.map(|v| (v / length) as f32)
+            }
+        };
+    }
+    Ok(normals)
+}
+
+fn wireframe_edges(
+    indices: &[u32],
+    point_ids: &[u32],
+    seen: Option<&mut std::collections::HashSet<u64>>,
+) -> Vec<u32> {
+    let mut edges = Vec::with_capacity(indices.len());
+    for tri in indices.as_chunks::<3>().0 {
+        for [a, b] in [[tri[0], tri[1]], [tri[1], tri[2]], [tri[2], tri[0]]] {
+            if a != b {
+                edges.push([a.min(b), a.max(b)]);
+            }
+        }
+    }
+    edges.sort_unstable();
+    edges.dedup();
+    if let Some(seen) = seen {
+        edges.retain(|edge| {
+            let [a, b] = edge.map(|i| point_ids[i as usize]);
+            seen.insert((u64::from(a.min(b)) << 32) | u64::from(a.max(b)))
+        });
+    }
+    edges.shrink_to_fit();
+    edges.into_flattened()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use gpui_mesh::{DataSet, Field};
+
+    #[test]
+    fn public_preparation_rejects_invalid_cell_field_storage_before_gathering() {
+        let dataset = DataSet::structured_grid("cell", [2; 3], [0.0; 3], [1.0; 3]).unwrap();
+        for field in [Field::scalar("p", vec![]).on_cells(), {
+            let mut field = Field::scalar("p", vec![0.0]).on_cells();
+            field.valid = Some(vec![true, true].into());
+            field
+        }] {
+            let actor = Actor::new(dataset.clone().with_field(field))
+                .coloured_by_cell("p", crate::TransferFunction::viridis([0.0, 1.0]));
+            assert!(matches!(
+                prepare_chunks(&actor, 10),
+                Err(SceneError::Mesh(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn cell_colors_split_only_discontinuities_and_keep_geometric_normals() {
+        let dataset =
+            DataSet::structured_grid("pair", [3, 2, 2], [-1.0, -0.5, -0.5], [1.0; 3]).unwrap();
+        let reference = prepare_chunks(&Actor::new(dataset.clone()), 100).unwrap();
+        let original = &reference[0];
+        for values in [vec![0.0, 0.0], vec![0.0, 1.0]] {
+            let expected_vertices = if values[0] == values[1] { 12 } else { 16 };
+            let actor = Actor::new(
+                dataset
+                    .clone()
+                    .with_field(Field::scalar("p", values).on_cells()),
+            )
+            .coloured_by_cell("p", crate::TransferFunction::viridis([0.0, 1.0]))
+            .wireframe(true);
+            let chunks = prepare_chunks(&actor, 100).unwrap();
+            assert_eq!(chunks.len(), 1);
+            let chunk = &chunks[0];
+            assert_eq!(chunk.vertex_count(), expected_vertices);
+            for (i, position) in chunk.positions.as_chunks::<3>().0.iter().enumerate() {
+                let source = original
+                    .positions
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
+                    .position(|p| p == position)
+                    .unwrap();
+                assert_eq!(
+                    &chunk.normals[i * 3..i * 3 + 3],
+                    &original.normals[source * 3..source * 3 + 3]
+                );
+            }
+            for tri in chunk.indices.as_chunks::<3>().0 {
+                let values = tri.map(|i| chunk.scalars[i as usize]);
+                assert!(
+                    values.iter().all(|v| *v == values[0]),
+                    "cell value interpolates across owners"
+                );
+            }
+            let expected_edges = prepare_chunks(&Actor::new(dataset.clone()).wireframe(true), 100)
+                .unwrap()[0]
+                .edges
+                .len();
+            assert_eq!(
+                chunk.edges.len(),
+                expected_edges,
+                "scalar seams duplicate wire edges"
+            );
+        }
+    }
+
+    #[test]
+    fn cell_scalar_seams_keep_one_wire_edge_across_chunk_boundaries() {
+        let dataset = DataSet::surface(
+            "quad",
+            vec![
+                [-1.0, -1.0, 0.0],
+                [1.0, -1.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [-1.0, 1.0, 0.0],
+            ],
+            &[[0, 1, 2], [0, 2, 3]],
+        );
+        for budget in [1, 2, 100] {
+            let actor = Actor::new(
+                dataset
+                    .clone()
+                    .with_field(Field::scalar("p", vec![0.0, 1.0]).on_cells()),
+            )
+            .coloured_by_cell("p", crate::TransferFunction::viridis([0.0, 1.0]))
+            .wireframe(true);
+            let chunks = prepare_chunks(&actor, budget).unwrap();
+            assert_eq!(chunks.iter().map(|c| c.edges.len() / 2).sum::<usize>(), 5);
+            let mut actor = actor;
+            actor.dataset.cell_data[0].valid = Some(vec![false, true].into());
+            let chunks = prepare_chunks(&actor, budget).unwrap();
+            assert_eq!(chunks.iter().map(|c| c.edges.len() / 2).sum::<usize>(), 3);
+        }
+    }
+
+    #[test]
+    fn wire_edges_are_unique_across_winding_and_chunk_boundaries() {
+        let dataset = DataSet::surface(
+            "quad",
+            vec![
+                [-1.0, -1.0, 0.0],
+                [1.0, -1.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [-1.0, 1.0, 0.0],
+            ],
+            &[[0, 1, 2], [0, 2, 3]],
+        );
+        for budget in [1, 2] {
+            for reversed in [false, true] {
+                let mut dataset = dataset.clone();
+                if reversed {
+                    dataset.cells = gpui_mesh::Cells::triangles(&[[2, 1, 0], [3, 2, 0]]);
+                }
+                let chunks = prepare_chunks(&Actor::new(dataset).wireframe(true), budget).unwrap();
+                assert_eq!(chunks.iter().map(|c| c.edges.len() / 2).sum::<usize>(), 5);
+                let mut pairs = std::collections::HashSet::new();
+                for chunk in chunks {
+                    for edge in chunk.edges.as_chunks::<2>().0 {
+                        let p = edge.map(|i| {
+                            [
+                                chunk.positions[i as usize * 3].to_bits(),
+                                chunk.positions[i as usize * 3 + 1].to_bits(),
+                                chunk.positions[i as usize * 3 + 2].to_bits(),
+                            ]
+                        });
+                        let key = if p[0] < p[1] {
+                            (p[0], p[1])
+                        } else {
+                            (p[1], p[0])
+                        };
+                        assert!(pairs.insert(key), "duplicate shared edge");
+                    }
+                }
+            }
+        }
+        let mut field = Field::scalar("p", vec![0.0; 4]);
+        field.valid = Some(vec![true, true, true, false].into());
+        let actor = Actor::new(dataset.with_field(field))
+            .coloured_by("p", crate::TransferFunction::viridis([0.0, 1.0]))
+            .wireframe(true);
+        assert_eq!(
+            prepare_chunks(&actor, 1)
+                .unwrap()
+                .iter()
+                .map(|c| c.edges.len() / 2)
+                .sum::<usize>(),
+            3
+        );
+    }
 
     #[test]
     fn prepares_rebased_chunks_with_scalars() {
@@ -225,5 +704,35 @@ mod tests {
             prepare_chunks(&actor, 100),
             Err(SceneError::FieldNotFound(_))
         ));
+    }
+
+    #[test]
+    fn masked_point_and_cell_values_do_not_become_valid_colors() {
+        for association in [Association::Point, Association::Cell] {
+            let count = if association == Association::Point {
+                3
+            } else {
+                1
+            };
+            let mut field = Field::scalar("p", vec![0.5; count]);
+            field.association = association;
+            field.valid = Some(vec![false; count].into());
+            let dataset = DataSet::surface(
+                "masked",
+                vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+                &[[0, 1, 2]],
+            )
+            .with_field(field);
+            let mut actor = Actor::new(dataset);
+            actor.field = Some((association, "p".into()));
+            let chunks = prepare_chunks(&actor, 100).unwrap();
+            assert!(
+                chunks
+                    .iter()
+                    .flat_map(|c| &c.scalars)
+                    .all(|value| value.is_nan())
+            );
+            assert!(chunks.iter().all(|chunk| chunk.indices.is_empty()));
+        }
     }
 }

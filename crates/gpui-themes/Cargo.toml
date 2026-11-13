@@ -1,6 +1,6 @@
 [package]
 name = "gpui-themes"
-version = "0.10.44"
+version = "0.11.0"
 authors.workspace = true
 edition.workspace = true
 description = "Theme editor and management for GPUI applications"
@@ -39,7 +39,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
-gpui = { version = "0.2.3",  package = "sotf-gpui-toolkit-gpui", git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
 
 [lib]
 name = "gpui_themes"

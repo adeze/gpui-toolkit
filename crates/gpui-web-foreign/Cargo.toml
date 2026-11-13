@@ -1,6 +1,6 @@
 [package]
 name = "gpui-web-foreign"
-version = "0.10.44"
+version = "0.11.0"
 edition.workspace = true
 rust-version = "1.89"
 authors.workspace = true
@@ -42,3 +42,7 @@ web-sys = { version = "0.3.104", features = [
     "Window",
     "console",
 ] }
+
+[[example]]
+name = "browser_lifecycle"
+crate-type = ["cdylib"]

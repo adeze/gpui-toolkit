@@ -13,11 +13,20 @@
 mod chunk;
 mod composite;
 mod dataset;
+mod decomposition;
 mod field;
+mod grid;
+mod structured_boundary;
 mod time_series;
 
-pub use chunk::{SurfaceChunk, boundary_triangles, surface_chunks};
+pub use chunk::{
+    SurfaceChunk, SurfaceExtractionLimits, boundary_triangles, surface_chunks,
+    surface_chunks_with_limits, try_for_each_surface_chunk, try_for_each_surface_chunk_with_limits,
+};
 pub use composite::{Block, CompositeDataSet};
-pub use dataset::{Bounds, CellType, Cells, DataSet, DataSetKind, MeshError};
+pub use dataset::{Bounds, CellType, Cells, DataSet, DataSetKind, MeshError, ValidatedDataSet};
+pub use decomposition::tetrahedra;
 pub use field::{Association, Field, FieldData};
-pub use time_series::TimeSeries;
+#[doc(inline)]
+pub use grid::GridBuildLimits;
+pub use time_series::{PreparedTimeSeries, TimeAxis, TimeSeries, TimeSeriesSampler};

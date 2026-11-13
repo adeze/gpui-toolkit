@@ -18,8 +18,8 @@ use gpui::prelude::{
     StyledImage,
 };
 use gpui::{
-    App, Div, ElementId, MouseButton, ObjectFit, Pixels, Rgba, SharedString, Stateful, Window, div,
-    img,
+    App, Div, ElementId, ImageSource, MouseButton, ObjectFit, Pixels, Rgba, SharedString, Stateful,
+    Window, div, img,
 };
 use std::path::PathBuf;
 
@@ -60,9 +60,10 @@ pub struct ImageViewTheme {
 }
 
 /// An image display component
+#[derive(gpui::IntoElement)]
 pub struct ImageView {
     id: ElementId,
-    src: Option<SharedString>,
+    src: Option<ImageSource>,
     alt: SharedString,
     width: Option<Pixels>,
     height: Option<Pixels>,
@@ -90,9 +91,29 @@ impl ImageView {
         }
     }
 
-    /// Set the image source path
+    /// Set a file path or URL to load through GPUI.
+    ///
+    /// Relative paths refer to the process working directory. Use [`Self::source`]
+    /// for embedded assets, predecoded images, or a custom GPUI loader.
     pub fn src(mut self, src: impl Into<SharedString>) -> Self {
-        self.src = Some(src.into());
+        let src = src.into();
+        self.src = Some(if src.contains("://") || src.starts_with("data:") {
+            src.into()
+        } else {
+            PathBuf::from(src.as_ref()).into()
+        });
+        self
+    }
+
+    /// Load an image from a native file path, including non-UTF-8 paths.
+    pub fn path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.src = Some(path.into().into());
+        self
+    }
+
+    /// Use any GPUI image source, including an already decoded image.
+    pub fn source(mut self, source: impl Into<ImageSource>) -> Self {
+        self.src = Some(source.into());
         self
     }
 
@@ -183,11 +204,7 @@ impl ImageView {
 
         container = container.bg(theme.placeholder_bg);
         if let Some(source) = self.src {
-            let mut image = if source.contains("://") || source.starts_with("data:") {
-                img(source)
-            } else {
-                img(PathBuf::from(source.as_ref()))
-            };
+            let mut image = img(source);
             let fallback_icon = placeholder_icon.clone();
             let fallback_color = theme.placeholder_text;
             image = image
@@ -235,18 +252,11 @@ impl RenderOnce for ImageView {
     }
 }
 
-impl IntoElement for ImageView {
-    type Element = gpui::Component<Self>;
-
-    fn into_element(self) -> Self::Element {
-        gpui::Component::new(self)
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::ImageFit;
-    use gpui::ObjectFit;
+    use super::{ImageFit, ImageView};
+    use gpui::{ImageSource, ObjectFit, Resource};
+    use std::path::Path;
 
     #[test]
     fn image_fit_maps_to_gpui_object_fit() {
@@ -256,5 +266,37 @@ mod tests {
             ObjectFit::Contain
         ));
         assert!(matches!(ObjectFit::from(ImageFit::Fill), ObjectFit::Fill));
+    }
+
+    #[test]
+    fn paths_and_urls_use_the_expected_gpui_resources() {
+        let file = ImageView::new("file").src("images/cover.png");
+        assert!(
+            matches!(file.src, Some(ImageSource::Resource(Resource::Path(path))) if path.as_ref() == Path::new("images/cover.png"))
+        );
+        let url = ImageView::new("url").src("https://example.com/cover.png");
+        assert!(matches!(
+            url.src,
+            Some(ImageSource::Resource(Resource::Uri(_)))
+        ));
+        let embedded = ImageView::new("embedded").source("images/cover.png");
+        assert!(matches!(
+            embedded.src,
+            Some(ImageSource::Resource(Resource::Embedded(_)))
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn path_preserves_non_utf8_file_names() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from(OsString::from_vec(vec![b'a', 0xff]));
+        let view = ImageView::new("file").path(path.clone());
+        assert!(
+            matches!(view.src, Some(ImageSource::Resource(Resource::Path(actual))) if actual.as_ref() == path)
+        );
     }
 }

@@ -3,11 +3,26 @@ use d3rs::grid::{GridConfig, render_grid};
 use d3rs::scale::{LinearScale, LogScale};
 use d3rs::shape::{CurveType, LineConfig, render_line};
 use gpui::prelude::FluentBuilder;
+use gpui::prelude::IntoElement;
 use gpui::{Div, ParentElement, Styled, div, px};
 use gpui_ui_kit::theme::Theme;
 
 use super::types::{BrushOverlay, PlotCurve, SecondaryAxisConfig};
 use super::utils::ChartTheme;
+
+pub mod generic;
+
+/// Padding between a vertical axis title and its tick values.
+///
+/// Kept small so the SPL/DI titles sit close to the values on both the
+/// left and right axes; used by every axis config (and the matching
+/// margin computations) so widths stay consistent.
+pub(crate) const AXIS_TITLE_PADDING: f32 = 2.0;
+#[allow(unused_imports, reason = "legend helper kept for external batch/image consumers")]
+pub use generic::{
+    generic_legend_entries, render_generic_bars, render_generic_freq_chart, render_generic_polar,
+    render_generic_subplots,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FreqSplPlotMargins {
@@ -31,17 +46,19 @@ pub fn freq_spl_plot_margins(chart_width: f32, has_secondary_axis: bool) -> Freq
         .with_label_font_size(label_size)
         .with_title_font_size(title_size)
         .with_tick_size(tick_size)
+        .with_title_padding(AXIS_TITLE_PADDING)
         .total_size();
-    let right_axis_width = if has_secondary_axis {
-        AxisConfig::right()
-            .with_title("DI (dB)")
-            .with_label_font_size(label_size)
-            .with_title_font_size(title_size)
-            .with_tick_size(tick_size)
-            .total_size()
-    } else {
-        0.0
-    };
+    // Always reserve the secondary (DI) axis width, even on charts
+    // without one, so every SPL-vs-frequency graph has the same plot
+    // width and graphs line up when compared side by side.
+    let _ = has_secondary_axis;
+    let right_axis_width = AxisConfig::right()
+        .with_title("DI (dB)")
+        .with_label_font_size(label_size)
+        .with_title_font_size(title_size)
+        .with_tick_size(tick_size)
+        .with_title_padding(AXIS_TITLE_PADDING)
+        .total_size();
 
     FreqSplPlotMargins {
         left_axis_width,
@@ -49,14 +66,30 @@ pub fn freq_spl_plot_margins(chart_width: f32, has_secondary_axis: bool) -> Freq
     }
 }
 
+/// Width of the plot area itself: `total_width` minus both Y axes.
+///
+/// Callers pass the total available width; the axes live inside it.
+/// Using the total as the plot width instead makes the chart row wider
+/// than its container, and flex shrink then scales the chart row and
+/// the bottom-axis row by different factors, drifting the frequency
+/// labels away from the grid lines and curves.
+fn plot_area_width(total_width: f32, margins: &FreqSplPlotMargins) -> f32 {
+    (total_width - margins.left_axis_width - margins.right_axis_width).max(1.0)
+}
+
 /// Renders a reusable frequency/SPL plot with optional secondary Y-axis
 ///
 /// This is the common chart used for CEA2034, horizontal SPL, and vertical SPL plots.
 /// All use a log frequency X-axis and linear SPL Y-axis.
+///
+/// `chart_width` is the total width including the left (and optional
+/// right) Y axis; the plot area is what remains after subtracting them,
+/// so the bottom axis, grid, and curves share one coordinate system.
 pub fn render_freq_spl_plot(
     curves: Vec<PlotCurve>,
     freq_domain: (f64, f64),
     spl_domain: (f64, f64),
+    grid_tickvals: Option<&(Vec<f64>, Vec<f64>)>,
     secondary_axis: Option<SecondaryAxisConfig>,
     chart_width: f32,
     chart_height: f32,
@@ -69,11 +102,12 @@ pub fn render_freq_spl_plot(
     let scale = (chart_width / 800.0).clamp(0.7, 1.2);
     let (label_size, title_size, tick_size) = freq_spl_plot_axis_sizes(chart_width);
     let margins = freq_spl_plot_margins(chart_width, secondary_axis.is_some());
+    let plot_width = plot_area_width(chart_width, &margins);
 
     // Create log frequency scale with zoom support
     let freq_scale = LogScale::new()
         .domain(freq_domain.0, freq_domain.1)
-        .range(0.0, f64::from(chart_width));
+        .range(0.0, f64::from(plot_width));
     // Create linear SPL scale for main curves
     let spl_scale = LinearScale::new()
         .domain(spl_domain.0, spl_domain.1)
@@ -106,16 +140,10 @@ pub fn render_freq_spl_plot(
         .filter(|&f| f >= freq_domain.0 && f <= freq_domain.1)
         .collect();
 
-    // Grid lines - filter to current domain
-    let grid_freq_values: Vec<f64> = vec![
-        50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0, 20000.0,
-    ]
-    .into_iter()
-    .filter(|&f| f >= freq_domain.0 && f <= freq_domain.1)
-    .collect();
 
-    // Generate SPL tick values
-    let spl_step = 10.0;
+    // Generate SPL tick values: a label every 5 dB, as in the Python
+    // layout (generate_yaxis_spl with range_step=5 for spinorama plots).
+    let spl_step = 5.0;
     let spl_ticks: Vec<f64> = {
         let start = (spl_domain.0 / spl_step).ceil() as i32;
         let end = (spl_domain.1 / spl_step).floor() as i32;
@@ -134,12 +162,14 @@ pub fn render_freq_spl_plot(
     let secondary_curves: Vec<&PlotCurve> =
         curves.iter().filter(|c| c.use_secondary_axis).collect();
     let left_axis_config = AxisConfig::left()
+        .with_ticks_inside(true)
         .with_tick_values(spl_ticks)
         .with_formatter(|v| format!("{v:.0}"))
         .with_title("SPL (dB)")
         .with_label_font_size(label_size)
         .with_title_font_size(title_size)
-        .with_tick_size(tick_size);
+        .with_tick_size(tick_size)
+        .with_title_padding(AXIS_TITLE_PADDING);
 
     div()
         .flex()
@@ -158,19 +188,141 @@ pub fn render_freq_spl_plot(
                 // Chart area
                 .child(
                     div()
-                        .w(px(chart_width))
+                        .w(px(plot_width))
                         .h(px(chart_height))
                         .relative()
                         .bg(ui_theme.surface)
                         .child(render_grid(
                             &freq_scale,
                             &spl_scale,
-                            &GridConfig::with_lines()
-                                .with_vertical_values(grid_freq_values.clone()),
-                            chart_width,
+                            &{
+                                // Thin lines at every log tick (2..9 per
+                                // decade, Python dtick="D1"), no dots at
+                                // intersections.
+                                let mut log_grid_values: Vec<f64> = (0..=3)
+                                    .flat_map(|decade| {
+                                        let base = 10f64.powi(decade + 1);
+                                        (1..=9).map(move |m| f64::from(m) * base)
+                                    })
+                                    .filter(|f| {
+                                        *f >= freq_domain.0 && *f <= freq_domain.1
+                                    })
+                                    .collect();
+                                log_grid_values.sort_by(f64::total_cmp);
+                                let mut config = GridConfig::with_lines()
+                                    .with_dots(false)
+                                    .with_vertical_values(log_grid_values);
+                                if let Some((x_vals, y_vals)) = grid_tickvals {
+                                    if !x_vals.is_empty() {
+                                        config = config.with_vertical_values(
+                                            x_vals
+                                                .iter()
+                                                .copied()
+                                                .filter(|f| {
+                                                    *f >= freq_domain.0 && *f <= freq_domain.1
+                                                })
+                                                .collect(),
+                                        );
+                                    }
+                                    if !y_vals.is_empty() {
+                                        config = config.with_horizontal_values(
+                                            y_vals
+                                                .iter()
+                                                .copied()
+                                                .filter(|v| {
+                                                    *v >= spl_domain.0 && *v <= spl_domain.1
+                                                })
+                                                .collect(),
+                                        );
+                                    }
+                                }
+                                config
+                            },
+                            plot_width,
                             chart_height,
                             &theme,
                         ))
+                        // 0 dB reference line: black, slightly thicker
+                        // than the grid (Python layouts draw the eye to
+                        // the 0 dB axis first).
+                        .when(
+                            spl_domain.0 <= 0.0 && 0.0 <= spl_domain.1,
+                            |el| {
+                                let zero_y = ((spl_domain.1 / (spl_domain.1 - spl_domain.0))
+                                    as f32)
+                                    * chart_height;
+                                el.child(
+                                    div()
+                                        .absolute()
+                                        .left_0()
+                                        .right_0()
+                                        .top(px(zero_y - 0.75))
+                                        .h(px(1.5))
+                                        .bg(gpui::black()),
+                                )
+                            },
+                        )
+                        // Filled curves (recommended zones / bands)
+                        .children(primary_curves.iter().filter_map(|curve| {
+                            let (color, opacity) = curve.fill?;
+                            if curve.points.is_empty() {
+                                return None;
+                            }
+                            let base = 0.0f64.clamp(spl_domain.0, spl_domain.1);
+                            let mut poly: Vec<(f32, f32)> = curve
+                                .points
+                                .iter()
+                                .map(|p| {
+                                    (
+                                        ((p.x.ln() - freq_domain.0.ln())
+                                            / (freq_domain.1.ln() - freq_domain.0.ln()))
+                                            as f32
+                                            * plot_width,
+                                        ((spl_domain.1 - p.y)
+                                            / (spl_domain.1 - spl_domain.0))
+                                            as f32
+                                            * chart_height,
+                                    )
+                                })
+                                .collect();
+                            if let (Some(&(fx, _)), Some(&(lx, _))) =
+                                (poly.first(), poly.last())
+                            {
+                                let by = ((spl_domain.1 - base)
+                                    / (spl_domain.1 - spl_domain.0))
+                                    as f32
+                                    * chart_height;
+                                poly.push((lx, by));
+                                poly.push((fx, by));
+                            }
+                            let fill = color.to_rgba();
+                            Some(
+                                gpui::canvas(
+                                    move |_b, _w, _c| (poly.clone(), fill, opacity),
+                                    move |bounds, (poly, fill, opacity), window, _cx| {
+                                        let ox: f32 = bounds.origin.x.into();
+                                        let oy: f32 = bounds.origin.y.into();
+                                        let mut b = gpui::PathBuilder::fill();
+                                        for (i, &(x, y)) in poly.iter().enumerate() {
+                                            if i == 0 {
+                                                b.move_to(gpui::point(px(ox + x), px(oy + y)));
+                                            } else {
+                                                b.line_to(gpui::point(px(ox + x), px(oy + y)));
+                                            }
+                                        }
+                                        b.close();
+                                        if let Ok(path) = b.build() {
+                                            let mut c = fill;
+                                            c.a *= opacity;
+                                            window.paint_path(path, c);
+                                        }
+                                    },
+                                )
+                                .absolute()
+                                .inset_0()
+                                .into_any_element(),
+                            )
+                        }))
                         // Render primary axis curves
                         .children(primary_curves.iter().filter_map(|curve| {
                             if curve.points.is_empty() {
@@ -182,6 +334,12 @@ pub fn render_freq_spl_plot(
                                 .curve(CurveType::Linear);
                             if let Some(dash_array) = curve.dash_array.clone() {
                                 line_config = line_config.dash_array(dash_array);
+                            }
+                            if let Some(symbol) = curve.marker_symbol {
+                                line_config = line_config
+                                    .show_points(true)
+                                    .point_symbol(symbol)
+                                    .point_radius((curve.marker_size / 2.0).max(1.5));
                             }
                             Some(render_line(
                                 &freq_scale,
@@ -202,6 +360,12 @@ pub fn render_freq_spl_plot(
                                 .curve(CurveType::Linear);
                             if let Some(dash_array) = curve.dash_array.clone() {
                                 line_config = line_config.dash_array(dash_array);
+                            }
+                            if let Some(symbol) = curve.marker_symbol {
+                                line_config = line_config
+                                    .show_points(true)
+                                    .point_symbol(symbol)
+                                    .point_radius((curve.marker_size / 2.0).max(1.5));
                             }
                             Some(render_line(
                                 &freq_scale,
@@ -235,12 +399,14 @@ pub fn render_freq_spl_plot(
                     // For DI axis, we use the tick values directly and filter with max_label_value
                     // by passing only tick values up to max_label_value that should have labels
                     let axis_config = AxisConfig::right()
+                        .with_ticks_inside(true)
                         .with_tick_values(cfg.tick_values)
                         .with_formatter(|v| format!("{v:.0}"))
                         .with_title(cfg.title)
                         .with_label_font_size(label_size)
                         .with_title_font_size(title_size)
-                        .with_tick_size(tick_size);
+                        .with_tick_size(tick_size)
+                        .with_title_padding(AXIS_TITLE_PADDING);
                     el.child(render_axis(&sec_scale, &axis_config, chart_height, &theme))
                 }),
         )
@@ -252,6 +418,7 @@ pub fn render_freq_spl_plot(
                 .child(render_axis(
                     &freq_scale,
                     &AxisConfig::bottom()
+                        .with_ticks_inside(true)
                         .with_tick_values(major_freq_ticks)
                         .with_minor_tick_values(minor_freq_ticks)
                         .with_minor_tick_size((3.0 * scale).max(2.0))
@@ -266,7 +433,7 @@ pub fn render_freq_spl_plot(
                         .with_label_font_size(label_size)
                         .with_title_font_size(title_size)
                         .with_tick_size(tick_size),
-                    chart_width,
+                    plot_width,
                     &theme,
                 ))
                 .when(margins.right_axis_width > 0.0, |el| {
@@ -285,12 +452,41 @@ mod tests {
         let with_secondary = freq_spl_plot_margins(800.0, true);
 
         assert!(without_secondary.left_axis_width > 0.0);
-        assert_eq!(without_secondary.right_axis_width, 0.0);
+        // The DI axis width is reserved on every chart so plot widths
+        // match with and without a secondary axis.
+        assert!(without_secondary.right_axis_width > 0.0);
         assert_eq!(
             with_secondary.left_axis_width,
             without_secondary.left_axis_width
         );
-        assert!(with_secondary.right_axis_width > 0.0);
+        assert_eq!(
+            with_secondary.right_axis_width,
+            without_secondary.right_axis_width
+        );
+    }
+
+    #[test]
+    fn plot_area_width_subtracts_both_axes() {
+        // The bottom axis, grid, and curves must share the plot-area
+        // width; using the total width drifts the frequency labels
+        // away from the grid (flex shrink scales the rows differently).
+        let without_secondary = freq_spl_plot_margins(1200.0, false);
+        assert_eq!(
+            plot_area_width(1200.0, &without_secondary),
+            1200.0 - without_secondary.left_axis_width - without_secondary.right_axis_width
+        );
+        let with_secondary = freq_spl_plot_margins(1200.0, true);
+        assert_eq!(
+            plot_area_width(1200.0, &with_secondary),
+            1200.0 - with_secondary.left_axis_width - with_secondary.right_axis_width
+        );
+        // Same plot width either way: graphs align in comparisons.
+        assert_eq!(
+            plot_area_width(1200.0, &with_secondary),
+            plot_area_width(1200.0, &without_secondary)
+        );
+        // Degenerate widths clamp to a positive plot area.
+        assert_eq!(plot_area_width(10.0, &with_secondary), 1.0);
     }
 
     #[test]

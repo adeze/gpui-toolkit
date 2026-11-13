@@ -50,6 +50,9 @@ impl SpinoramaApp {
 
         // Map colormap
         let colormap = match self.contour_colormap {
+            // The GPU surface colormaps have no Spinorama ramp; Turbo
+            // is the closest rainbow approximation.
+            Colormap::Spinorama => Surface3DColormap::Turbo,
             Colormap::Viridis => Surface3DColormap::Viridis,
             Colormap::Plasma => Surface3DColormap::Plasma,
             Colormap::Magma => Surface3DColormap::Inferno,
@@ -68,10 +71,22 @@ impl SpinoramaApp {
             .show_grid(self.surface_show_grid)
             .plot_type(SurfacePlotType::Cartesian) // Set plot type
             .camera_position(
-                5.0,
+                // Published pictures sit further back so the whole
+                // surface (incl. the low front edge) fits the frame
+                // instead of being truncated at the bottom.
+                if self.chart_only { 7.8 } else { 5.0 },
                 self.surface_rotation_azimuth,
                 self.surface_rotation_elevation,
             );
+
+        // The camera lives in the shared state (config distance only
+        // seeds new elements); published pictures pull it back so
+        // the front edge of the surface fits the frame.
+        if self.chart_only {
+            let mut state = self.surface_state.borrow_mut();
+            state.controls.distance = 5.4;
+            state.update_camera();
+        }
 
         // Create element with shared state
         // Retain the registration across GPUI frame submission and interaction.
@@ -265,6 +280,24 @@ impl SpinoramaApp {
                 state.update_camera();
                 cx.notify();
             }));
+
+        // Headless (chart-only) pictures carry the payload title and
+        // no interactive controls.
+        if self.chart_only {
+            return div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .gap(px(ds.spacing.section_gap))
+                .child(
+                    div()
+                        .text_size(px(ds.typography.large_size * s))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(theme.text_primary)
+                        .child(self.title_override.clone().unwrap_or_default()),
+                )
+                .child(surface_view);
+        }
 
         div()
             .size_full()

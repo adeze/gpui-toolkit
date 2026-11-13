@@ -1,5 +1,31 @@
 # Unreleased
 
+# 0.11.0
+
+# 0.10.47
+
+## Added
+
+- `ContourConfig::value_range(min, max)`: fixed value range for
+  heatmap color normalization, honored by both the GPUI quad
+  heatmap and the Vello heatmap scene. Default (`None`) keeps
+  normalizing over the data's own min/max.
+
+## Fixed
+
+- Vello heatmap cells are expanded by half a pixel so abutting
+  rects no longer leave anti-aliased hairline seams (a fine mesh
+  over smooth fields).
+
+# 0.10.46
+
+## Added
+
+- `AxisConfig::ticks_inside` (builder `with_ticks_inside`): draws tick
+  marks inside the plot area, Plotly `ticks="inside"` style, for bottom,
+  left, and right axes. Labels remain outside the plot. Default remains
+  outside ticks.
+
 # 0.10.19
 
 ## Fixed

@@ -7,31 +7,7 @@ use crate::interp::{Weights, interpolate_point_fields};
 use gpui_mesh::{Association, CellType, Cells, DataSet};
 use std::collections::HashMap;
 
-/// Tetrahedralizes one volume cell into dataset node-index tetrahedra.
-fn tetrahedralize(kind: CellType, n: &[u32]) -> Vec<[u32; 4]> {
-    match kind {
-        CellType::Tetra => vec![[n[0], n[1], n[2], n[3]]],
-        // Six tetrahedra around the 0-6 body diagonal. Every face diagonal
-        // touches node 0 or node 6, so identically oriented neighbours
-        // triangulate their shared face the same way and the extracted
-        // surface stays watertight.
-        CellType::Hexahedron => vec![
-            [n[0], n[1], n[2], n[6]],
-            [n[0], n[2], n[3], n[6]],
-            [n[0], n[3], n[7], n[6]],
-            [n[0], n[7], n[4], n[6]],
-            [n[0], n[4], n[5], n[6]],
-            [n[0], n[5], n[1], n[6]],
-        ],
-        CellType::Wedge => vec![
-            [n[0], n[1], n[2], n[3]],
-            [n[1], n[2], n[3], n[4]],
-            [n[2], n[3], n[4], n[5]],
-        ],
-        CellType::Pyramid => vec![[n[0], n[1], n[2], n[4]], [n[0], n[2], n[3], n[4]]],
-        _ => Vec::new(),
-    }
-}
+use gpui_mesh::tetrahedra as tetrahedralize;
 
 struct IsoBuilder<'a> {
     dataset: &'a DataSet,
@@ -53,18 +29,30 @@ impl IsoBuilder<'_> {
         }
         let va = self.scalars[a as usize];
         let vb = self.scalars[b as usize];
-        let t = if (vb - va).abs() < f64::EPSILON {
+        let span = vb - va;
+        let t = if span == 0.0 {
             0.5
+        } else if span.is_finite() {
+            (self.value - va) / span
         } else {
-            (self.value - va) / (vb - va)
+            // Straddling finite endpoints can have an overflowing difference.
+            // Halving preserves their interpolation ratio without infinities.
+            (self.value * 0.5 - va * 0.5) / (vb * 0.5 - va * 0.5)
         };
         let pa = self.dataset.positions[a as usize];
         let pb = self.dataset.positions[b as usize];
-        let p = [
-            pa[0] + (pb[0] - pa[0]) * t,
-            pa[1] + (pb[1] - pa[1]) * t,
-            pa[2] + (pb[2] - pa[2]) * t,
-        ];
+        let p = std::array::from_fn(|axis| {
+            let (a, b) = (pa[axis], pb[axis]);
+            if a.is_sign_negative() == b.is_sign_negative() {
+                if t <= 0.5 {
+                    a + (b - a) * t
+                } else {
+                    b + (a - b) * (1.0 - t)
+                }
+            } else {
+                a * (1.0 - t) + b * t
+            }
+        });
         let id = self.positions.len() as u32;
         self.positions.push(p);
         self.weights.push(vec![(a, 1.0 - t), (b, t)]);
@@ -118,17 +106,24 @@ impl IsoBuilder<'_> {
 ///
 /// Volume cells are tetrahedralized and processed with marching
 /// tetrahedra. Interpolated points are deduplicated per edge, so the
-/// output is a watertight indexed triangle surface for a closed input.
+/// output is a watertight indexed triangle surface for a closed, fully valid
+/// input. Tetrahedra with any missing scalar node are omitted; missing regions
+/// may therefore leave open boundaries.
 ///
 /// # Errors
 ///
-/// Returns an error when the field is missing, not scalar, or the dataset
-/// holds no volume cells.
+/// Returns an error for a nonfinite level, invalid dataset, missing/non-scalar
+/// field, or a dataset with no volume cells.
 pub fn isosurface(
     dataset: &DataSet,
     field_name: &str,
     value: f64,
 ) -> Result<DataSet, TransformError> {
+    if !value.is_finite() {
+        return Err(TransformError::Degenerate(
+            "isosurface value must be finite".into(),
+        ));
+    }
     dataset.validate()?;
     let field = dataset
         .field(Association::Point, field_name)
@@ -160,7 +155,9 @@ pub fn isosurface(
             let cell = volume_cells[index];
             let nodes = dataset.cells.cell(cell).unwrap_or(&[]);
             for tet in tetrahedralize(dataset.cells.types[cell], nodes) {
-                builder.march_tet(tet);
+                if field.valid.is_none() || tet.iter().all(|&node| field.is_valid(node as usize)) {
+                    builder.march_tet(tet);
+                }
             }
         }
         builder

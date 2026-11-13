@@ -65,8 +65,19 @@ impl Runtime {
     }
 }
 
-async fn get(url: &str) -> Result<Value, String> {
-    reqwest::get(url)
+/// True when an API error string is an HTTP 401/403 (missing/invalid key).
+pub fn is_auth_error(error: &str) -> bool {
+    error.contains("401") || error.contains("403")
+}
+
+async fn get(url: &str, api_key: Option<&str>) -> Result<Value, String> {
+    let client = reqwest::Client::new();
+    let mut request = client.get(url);
+    if let Some(key) = api_key.filter(|k| !k.trim().is_empty()) {
+        request = request.bearer_auth(key.trim());
+    }
+    request
+        .send()
         .await
         .map_err(|e| e.to_string())?
         .error_for_status()
@@ -76,36 +87,165 @@ async fn get(url: &str) -> Result<Value, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Full-access API base (requires a token).
+pub const FULL_API_BASE_URL: &str = "https://api.spinorama.org/v1";
+/// Demo API base (no token, 10 speakers).
+pub const DEMO_API_BASE_URL: &str = "https://api.spinorama.org/demo/v1";
+/// Explicit base-URL override (CI / headless / tests).
+pub const ENV_API_BASE_URL: &str = "SPINORAMA_API_BASE";
+/// Set to `1`/`true`/`demo` to default to the demo API.
+pub const ENV_USE_DEMO_API: &str = "SPINORAMA_USE_DEMO";
+
+/// True when the process (or wasm query string) requests the demo API.
+///
+/// Native: `SPINORAMA_USE_DEMO=1` (or `true`/`demo`), or a
+/// `SPINORAMA_API_BASE` containing `/demo/`.
+/// Wasm: `?demo=1` (or `?api=demo`) on the hosting page URL.
+pub fn demo_api_requested() -> bool {
+    if std::env::var(ENV_USE_DEMO_API).is_ok_and(|v| {
+        v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("demo")
+    }) {
+        return true;
+    }
+    if let Ok(base) = std::env::var(ENV_API_BASE_URL)
+        && base.contains("/demo/")
+    {
+        return true;
+    }
+    #[cfg(target_family = "wasm")]
+    {
+        if gpui_miniapp::web_query_param("demo")
+            .as_deref()
+            .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("demo"))
+        {
+            return true;
+        }
+        if gpui_miniapp::web_query_param("api")
+            .as_deref()
+            .is_some_and(|v| v.eq_ignore_ascii_case("demo"))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Base URL for the selected API mode.
+///
+/// An explicit `SPINORAMA_API_BASE` always wins (native and tests);
+/// otherwise the demo flag selects between the demo (10 speakers, no
+/// token) and the full token-protected API. On wasm the base is the
+/// same-origin proxy, matching the production nginx locations.
+// The wasm branch reads the browser origin and can fail, so the
+// `Result` is only vacuous on native targets.
+#[allow(clippy::unnecessary_wraps)]
+pub fn api_base_url(use_demo: bool) -> Result<String, String> {
+    if let Ok(custom) = std::env::var(ENV_API_BASE_URL) {
+        let trimmed = custom.trim().trim_end_matches('/').to_string();
+        if !trimmed.is_empty() {
+            return Ok(trimmed);
+        }
+    }
+    if use_demo {
+        #[cfg(not(target_family = "wasm"))]
+        {
+            return Ok(DEMO_API_BASE_URL.to_string());
+        }
+        #[cfg(target_family = "wasm")]
+        {
+            // Same-origin proxy mirrors the upstream path; derive the
+            // suffix from the public constant so both stay in sync.
+            let suffix = DEMO_API_BASE_URL
+                .strip_prefix("https://api.spinorama.org/")
+                .unwrap_or("demo/v1");
+            return Ok(format!(
+                "{}/api/spinorama/{suffix}",
+                web_sys::window()
+                    .ok_or("Browser window unavailable")?
+                    .location()
+                    .origin()
+                    .map_err(|_| "Browser origin unavailable")?
+            ));
+        }
+    }
+    // The wasm branch reads the browser origin and can fail, so the
+    // `Result` is only vacuous on native targets.
+    #[cfg(not(target_family = "wasm"))]
+    let base = FULL_API_BASE_URL.to_string();
+    #[cfg(target_family = "wasm")]
+    let base = {
+        let suffix = FULL_API_BASE_URL
+            .strip_prefix("https://api.spinorama.org/")
+            .unwrap_or("v1");
+        format!(
+            "{}/api/spinorama/{suffix}",
+            web_sys::window()
+                .ok_or("Browser window unavailable")?
+                .location()
+                .origin()
+                .map_err(|_| "Browser origin unavailable")?
+        )
+    };
+    Ok(base)
+}
+
 // The wasm branch reads the browser origin and can fail, so the
 // `Result` is only vacuous on native targets.
 #[allow(clippy::unnecessary_wraps)]
 fn api_url(path: &str) -> Result<String, String> {
-    #[cfg(not(target_family = "wasm"))]
-    let base = "https://api.spinorama.org/v1".to_string();
-    #[cfg(target_family = "wasm")]
-    let base = format!(
-        "{}/api/spinorama/v1",
-        web_sys::window()
-            .ok_or("Browser window unavailable")?
-            .location()
-            .origin()
-            .map_err(|_| "Browser origin unavailable")?
-    );
-    Ok(format!("{base}/{path}"))
+    Ok(format!("{}/{path}", api_base_url(false)?))
 }
 
-pub async fn fetch_versions(speaker: &str) -> Result<Vec<String>, String> {
-    let value = get(&api_url(&format!(
-        "speaker/{}/versions",
-        urlencoding::encode(speaker)
-    ))?)
+fn api_url_for(path: &str, use_demo: bool) -> Result<String, String> {
+    Ok(format!("{}/{path}", api_base_url(use_demo)?))
+}
+
+pub async fn fetch_versions(
+    speaker: &str,
+    api_key: Option<&str>,
+    use_demo: bool,
+) -> Result<Vec<String>, String> {
+    let value = get(
+        &api_url_for(
+            &format!("speaker/{}/versions", urlencoding::encode(speaker)),
+            use_demo,
+        )?,
+        api_key,
+    )
     .await?;
     serde_json::from_value(value).map_err(|e| e.to_string())
 }
 
-pub async fn fetch_available_speakers() -> Result<Vec<String>, String> {
-    let value = get(&api_url("speakers")?).await?;
+#[cfg_attr(test, allow(dead_code, reason = "live caller is gated out in unit tests"))]
+pub async fn fetch_available_speakers(
+    api_key: Option<&str>,
+    use_demo: bool,
+) -> Result<Vec<String>, String> {
+    let value = get(&api_url_for("speakers", use_demo)?, api_key).await?;
     serde_json::from_value(value).map_err(|e| e.to_string())
+}
+
+/// Public (unauthenticated) PNG URL for a measurement.
+///
+/// Used in picture mode: the user sees the rendered result without any
+/// access to the underlying measurement data. The demo API serves JSON
+/// only, so requesting a demo PNG is an error — demo mode stays
+/// interactive instead of entering picture mode.
+pub fn measurement_image_url(
+    speaker: &str,
+    version: &str,
+    measurement: &str,
+    use_demo: bool,
+) -> Result<String, String> {
+    if use_demo {
+        return Err("The demo API serves JSON measurements only (no PNG pictures)".into());
+    }
+    api_url(&format!(
+        "speaker/{}/version/{}/measurements/{}?measurement_format=png",
+        urlencoding::encode(speaker),
+        urlencoding::encode(version),
+        urlencoding::encode(measurement)
+    ))
 }
 
 fn normalize(mut value: Value) -> Result<Value, String> {
@@ -128,14 +268,19 @@ pub async fn fetch_measurement_plot_data(
     speaker: &str,
     version: &str,
     measurement: &str,
+    api_key: Option<&str>,
+    use_demo: bool,
 ) -> Result<Value, String> {
-    let url = api_url(&format!(
-        "speaker/{}/version/{}/measurements/{}?measurement_format=json",
-        urlencoding::encode(speaker),
-        urlencoding::encode(version),
-        urlencoding::encode(measurement)
-    ))?;
-    normalize(get(&url).await?)
+    let url = api_url_for(
+        &format!(
+            "speaker/{}/version/{}/measurements/{}?measurement_format=json",
+            urlencoding::encode(speaker),
+            urlencoding::encode(version),
+            urlencoding::encode(measurement)
+        ),
+        use_demo,
+    )?;
+    normalize(get(&url, api_key).await?)
 }
 
 fn numbers(value: &Value) -> Result<Vec<f64>, String> {
@@ -192,6 +337,23 @@ fn numbers(value: &Value) -> Result<Vec<f64>, String> {
         return Err("Non-finite measurement sample".into());
     }
     Ok(values)
+}
+
+/// Maps a Plotly `marker.symbol` name to a d3rs symbol type.
+pub fn plotly_symbol(name: &str) -> Option<d3rs::shape::SymbolType> {
+    match name {
+        "square" => Some(d3rs::shape::SymbolType::Square),
+        "diamond" => Some(d3rs::shape::SymbolType::Diamond),
+        "cross" => Some(d3rs::shape::SymbolType::Cross),
+        "x" => Some(d3rs::shape::SymbolType::Wye),
+        "triangle-up" => Some(d3rs::shape::SymbolType::Triangle),
+        "triangle-down" => Some(d3rs::shape::SymbolType::TriangleDown),
+        "triangle-left" => Some(d3rs::shape::SymbolType::TriangleLeft),
+        "triangle-right" => Some(d3rs::shape::SymbolType::TriangleRight),
+        "star" => Some(d3rs::shape::SymbolType::Star),
+        "circle" => Some(d3rs::shape::SymbolType::Circle),
+        _ => None,
+    }
 }
 
 fn curve(trace: &Value) -> Result<Curve, String> {
@@ -261,6 +423,15 @@ pub fn extract_cea2034_curves_original(
     Ok(curves)
 }
 
+/// Parses the angle curves of an SPL Horizontal/Vertical payload.
+///
+/// Public wrapper for the headless image renderer, which builds
+/// sphere (globe) data from the two plane payloads on disk.
+#[cfg(all(target_os = "macos", feature = "capture-bench"))]
+pub fn directivity_curves(plot: &Value) -> Result<Vec<DirectivityCurve>, String> {
+    directivity(plot)
+}
+
 fn directivity(plot: &Value) -> Result<Vec<DirectivityCurve>, String> {
     let traces = plot["data"]
         .as_array()
@@ -297,11 +468,15 @@ fn directivity(plot: &Value) -> Result<Vec<DirectivityCurve>, String> {
 pub async fn fetch_directivity_data(
     speaker: &str,
     version: &str,
+    api_key: Option<&str>,
+    use_demo: bool,
 ) -> Result<DirectivityData, String> {
-    let horizontal =
-        directivity(&fetch_measurement_plot_data(speaker, version, "SPL Horizontal").await?)?;
-    let vertical =
-        directivity(&fetch_measurement_plot_data(speaker, version, "SPL Vertical").await?)?;
+    let horizontal = directivity(
+        &fetch_measurement_plot_data(speaker, version, "SPL Horizontal", api_key, use_demo).await?,
+    )?;
+    let vertical = directivity(
+        &fetch_measurement_plot_data(speaker, version, "SPL Vertical", api_key, use_demo).await?,
+    )?;
     Ok(DirectivityData {
         horizontal,
         vertical,
@@ -337,17 +512,349 @@ fn contour(plot: &Value) -> Result<ContourPlotData, String> {
     })
 }
 
+/// Parse contour data from an already-fetched Plotly measurement payload.
+#[cfg(all(target_os = "macos", feature = "capture-bench"))]
+pub fn contour_plot_data(plot: &Value) -> Result<ContourPlotData, String> {
+    contour(plot)
+}
+
 pub async fn fetch_contour_data(
     speaker: &str,
     version: &str,
     plane: &str,
+    api_key: Option<&str>,
+    use_demo: bool,
 ) -> Result<ContourPlotData, String> {
     let measurement = if plane == "horizontal" {
         "SPL Horizontal Contour"
     } else {
         "SPL Vertical Contour"
     };
-    contour(&fetch_measurement_plot_data(speaker, version, measurement).await?)
+    fetch_contour_measurement(speaker, version, measurement, api_key, use_demo).await
+}
+
+/// Fetches a named contour measurement (incl. Normalized variants).
+pub async fn fetch_contour_measurement(
+    speaker: &str,
+    version: &str,
+    measurement: &str,
+    api_key: Option<&str>,
+    use_demo: bool,
+) -> Result<ContourPlotData, String> {
+    contour(
+        &fetch_measurement_plot_data(speaker, version, measurement, api_key, use_demo).await?,
+    )
+}
+
+fn string_values(value: &Value) -> Vec<String> {
+    value
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .map(|v| {
+                    v.as_str().map_or_else(|| {
+                        v.as_f64()
+                            .map(|n| n.to_string())
+                            .unwrap_or_default()
+                    }, str::to_string)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn axis_layout(value: &Value) -> crate::types::AxisLayout {
+    let title = value
+        .pointer("/title/text")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let range = value.get("range").and_then(Value::as_array).and_then(|r| {
+        Some((r.first()?.as_f64()?, r.get(1)?.as_f64()?))
+    });
+    let log = value.get("type").and_then(Value::as_str) == Some("log");
+    let tick_values = value
+        .get("tickvals")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(Value::as_f64).collect())
+        .unwrap_or_default();
+    let tick_text = value
+        .get("ticktext")
+        .map(string_values)
+        .unwrap_or_default();
+    crate::types::AxisLayout {
+        title,
+        range,
+        log,
+        tick_values,
+        tick_text,
+    }
+}
+
+fn trace_color(trace: &Value) -> (crate::types::GenericTrace, f32) {
+    let mut out = crate::types::GenericTrace::new(crate::types::TraceKind::Scatter, "");
+    let mut opacity = trace
+        .get("opacity")
+        .and_then(Value::as_f64)
+        .unwrap_or(1.0) as f32;
+    // Line/marker colour and fill colour are independent in Plotly: a
+    // band trace carries both (`line.color` for its outline,
+    // `fillcolor` for the zone), so parse them separately instead of
+    // stopping at the first colour found.
+    for pointer in ["/line/color", "/marker/color"] {
+        if let Some(text) = trace.pointer(pointer).and_then(Value::as_str)
+            && let Some((color, alpha)) = crate::types::parse_plotly_color(text)
+        {
+            out.color = color;
+            if alpha < 1.0 {
+                opacity = alpha;
+            }
+            break;
+        }
+    }
+    if let Some(text) = trace.pointer("/fillcolor").and_then(Value::as_str)
+        && let Some((color, alpha)) = crate::types::parse_plotly_color(text)
+    {
+        out.fill_color = Some(color);
+        if alpha < 1.0 {
+            opacity = alpha;
+        }
+    }
+    (out, opacity)
+}
+
+/// Parses any Plotly payload into the generic trace model.
+///
+/// Handles `scatter`, `scatterpolar` (numeric and categorical), `bar`,
+/// `contour`/`heatmap`, and `surface` traces, plus layout axes, a
+/// secondary y axis, polar radial range, and annotations. All traces are
+/// kept in payload order, including fills and slope/zone traces that the
+/// specialised CEA2034 extractor drops.
+///
+/// # Errors
+///
+/// Returns an error when the payload has no trace array or a trace
+/// contains malformed numeric data.
+pub fn parse_plot(plot: &Value) -> Result<crate::types::PlotData, String> {
+    let plot = normalize(plot.clone())?;
+    let traces = plot["data"]
+        .as_array()
+        .ok_or("Missing measurement traces")?;
+    let mut out = crate::types::PlotData::default();
+    let layout = plot.get("layout").cloned().unwrap_or(Value::Null);
+    out.layout.title = layout
+        .pointer("/title/text")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    if let Some(x) = layout.get("xaxis") {
+        out.layout.x_axis = axis_layout(x);
+    }
+    if let Some(y) = layout.get("yaxis") {
+        out.layout.y_axis = axis_layout(y);
+    }
+    if let Some(y2) = layout.get("yaxis2") {
+        out.layout.y_axis2 = Some(axis_layout(y2));
+    }
+    out.layout.hide_zero_line = layout
+        .get("hide_zero_line")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    out.layout.polar_radial_range = layout
+        .pointer("/polar/radialaxis/range")
+        .and_then(Value::as_array)
+        .and_then(|r| Some((r.first()?.as_f64()?, r.get(1)?.as_f64()?)));
+    // Subplot cells: Plotly writes one xaxis/yaxis pair per cell
+    // (xaxis, xaxis2, ...) with paper domains. Cells only exist when
+    // more than one x axis is declared.
+    let axis_domain = |axis: &Value| -> (f64, f64) {
+        axis.get("domain")
+            .and_then(Value::as_array)
+            .and_then(|d| Some((d.first()?.as_f64()?, d.get(1)?.as_f64()?)))
+            .unwrap_or((0.0, 1.0))
+    };
+    let mut axis_index = 1usize;
+    loop {
+        let suffix = if axis_index == 1 {
+            String::new()
+        } else {
+            axis_index.to_string()
+        };
+        let Some(x_axis) = layout.get(format!("xaxis{suffix}")) else {
+            break;
+        };
+        let y_axis = layout
+            .get(format!("yaxis{suffix}"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        out.layout.subplots.push(crate::types::SubplotCell {
+            x_domain: axis_domain(x_axis),
+            y_domain: axis_domain(&y_axis),
+            title: None,
+            x_axis: axis_layout(x_axis),
+            y_axis: axis_layout(&y_axis),
+        });
+        axis_index += 1;
+    }
+    if out.layout.subplots.len() <= 1 {
+        out.layout.subplots.clear();
+    }
+
+    let mut paper_annotations: Vec<(String, f64, f64)> = Vec::new();
+    if let Some(items) = layout.get("annotations").and_then(Value::as_array) {
+        for item in items {
+            let text = item
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .replace("<br>", " ")
+                .replace("<br/>", " ");
+            let xref = item.get("xref").and_then(Value::as_str).unwrap_or("");
+            let (x, y) = (
+                item.get("x").and_then(Value::as_f64).unwrap_or(0.0),
+                item.get("y").and_then(Value::as_f64).unwrap_or(0.0),
+            );
+            if xref == "paper" && !out.layout.subplots.is_empty() {
+                paper_annotations.push((text, x, y));
+            } else {
+                out.layout.annotations.push(crate::types::Annotation { text, x, y });
+            }
+        }
+    }
+    // Subplot titles are paper annotations sitting just above a cell.
+    for (text, x, y) in paper_annotations {
+        let mut best: Option<(usize, f64)> = None;
+        for (index, cell) in out.layout.subplots.iter().enumerate() {
+            let center_x = cell.x_domain.0.midpoint(cell.x_domain.1);
+            if y < cell.y_domain.1 - 0.02 {
+                continue;
+            }
+            let distance = (center_x - x).abs() + (y - cell.y_domain.1).abs();
+            if best.is_none_or(|(_, d)| distance < d) {
+                best = Some((index, distance));
+            }
+        }
+        match best {
+            Some((index, _)) => out.layout.subplots[index].title = Some(text),
+            None => out.layout.annotations.push(crate::types::Annotation { text, x, y }),
+        }
+    }
+    const PALETTE: [u32; 10] = [
+        0x1f77b4, 0xff7f0e, 0x2ca02c, 0xd62728, 0x9467bd, 0x8c564b, 0xe377c2, 0x7f7f7f,
+        0xbcbd22, 0x17becf,
+    ];
+    for (index, trace) in traces.iter().enumerate() {
+        let type_name = trace.get("type").and_then(Value::as_str).unwrap_or("scatter");
+        let (mut generic, opacity) = trace_color(trace);
+        generic.opacity = opacity;
+        generic.name = trace
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        generic.visible = trace.get("visible").is_none_or(|v| {
+            v.as_bool().unwrap_or(v.as_str() != Some("legendonly"))
+        });
+        generic.secondary_axis = trace
+            .get("yaxis")
+            .and_then(Value::as_str)
+            .is_some_and(|a| a == "y2");
+        if !out.layout.subplots.is_empty() {
+            generic.subplot = trace
+                .get("xaxis")
+                .and_then(Value::as_str)
+                .and_then(|axis| axis.strip_prefix('x'))
+                .and_then(|digits| {
+                    if digits.is_empty() {
+                        Some(1usize)
+                    } else {
+                        digits.parse().ok()
+                    }
+                })
+                .unwrap_or(1)
+                .saturating_sub(1)
+                .min(out.layout.subplots.len() - 1);
+        }
+        generic.stroke_width = trace
+            .pointer("/line/width")
+            .and_then(Value::as_f64)
+            .unwrap_or(2.0) as f32;
+        generic.dash = trace
+            .pointer("/line/dash")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        generic.marker_size = trace
+            .pointer("/marker/size")
+            .and_then(Value::as_f64)
+            .unwrap_or(5.0) as f32;
+        generic.mode = match trace.get("mode").and_then(Value::as_str) {
+            Some("markers") => crate::types::TraceMode::Markers,
+            Some("lines+markers") => crate::types::TraceMode::LinesMarkers,
+            Some("none") => crate::types::TraceMode::None,
+            _ => crate::types::TraceMode::Lines,
+        };
+        generic.fill = match trace.get("fill").and_then(Value::as_str) {
+            Some("tozeroy") => Some(crate::types::TraceFill::ToZeroY),
+            Some("tonexty") => Some(crate::types::TraceFill::ToNextY),
+            Some("toself") => Some(crate::types::TraceFill::ToSelf),
+            _ => None,
+        };
+        generic.marker_symbol = trace
+            .pointer("/marker/symbol")
+            .and_then(Value::as_str)
+            .and_then(plotly_symbol);
+        if trace.pointer("/line/color").is_none() && trace.pointer("/marker/color").is_none() {
+            generic.color = d3rs_color_from_hex(PALETTE[index % PALETTE.len()]);
+        }
+        match type_name {
+            "bar" => {
+                generic.kind = crate::types::TraceKind::Bar;
+                generic.categories = string_values(&trace["x"]);
+                generic.y = numbers(&trace["y"]).unwrap_or_default();
+                if generic.categories.is_empty() {
+                    // Horizontal bars: categories on y, values on x.
+                    generic.categories = string_values(&trace["y"]);
+                    generic.y = numbers(&trace["x"]).unwrap_or_default();
+                }
+            }
+            "scatterpolar" => {
+                let theta_strings = string_values(&trace["theta"]);
+                let numeric_theta = numbers(&trace["theta"]).unwrap_or_default();
+                generic.r = numbers(&trace["r"]).unwrap_or_default();
+                if numeric_theta.len() == generic.r.len() && !generic.r.is_empty() {
+                    generic.kind = crate::types::TraceKind::ScatterPolar;
+                    generic.theta = numeric_theta;
+                } else {
+                    generic.kind = crate::types::TraceKind::ScatterPolarCategorical;
+                    generic.categories = theta_strings;
+                }
+            }
+            "contour" | "heatmap" => {
+                generic.kind = crate::types::TraceKind::Contour;
+                generic.x = numbers(&trace["x"]).unwrap_or_default();
+                generic.y = numbers(&trace["y"]).unwrap_or_default();
+                if let Ok(parsed) = contour(&plot) {
+                    generic.z = parsed.spl;
+                }
+            }
+            "surface" => {
+                generic.kind = crate::types::TraceKind::Surface;
+                generic.x = numbers(&trace["x"]).unwrap_or_default();
+                generic.y = numbers(&trace["y"]).unwrap_or_default();
+            }
+            _ => {
+                generic.kind = crate::types::TraceKind::Scatter;
+                generic.x = numbers(&trace["x"]).unwrap_or_default();
+                generic.y = numbers(&trace["y"]).unwrap_or_default();
+            }
+        }
+        out.traces.push(generic);
+    }
+    Ok(out)
+}
+
+fn d3rs_color_from_hex(hex: u32) -> d3rs::color::D3Color {
+    d3rs::color::D3Color::from_hex(hex)
 }
 
 #[cfg(test)]
@@ -411,6 +918,184 @@ mod tests {
                 .unwrap();
         assert_eq!(data.spl, [1.0, 2.0, 3.0, 4.0]);
         assert_eq!((data.angle_count, data.freq_count), (2, 2));
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    #[test]
+    fn bearer_header_is_sent_only_with_a_key() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::sync::mpsc;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let (tx, rx) = mpsc::channel::<Vec<String>>();
+        std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().expect("accept");
+                let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+                let mut headers = Vec::new();
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).expect("read line");
+                    if line == "\r\n" || line.is_empty() {
+                        break;
+                    }
+                    headers.push(line.trim().to_string());
+                }
+                tx.send(headers).expect("send headers");
+                let body = "{}";
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .expect("write response");
+            }
+        });
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        let url = format!("http://{addr}/v1/speakers");
+        runtime.block_on(async {
+            get(&url, Some("secret-key-1")).await.expect("authed get");
+            get(&url, None).await.expect("anon get");
+        });
+        let authed = rx.recv().expect("authed headers");
+        assert!(
+            authed.iter().any(|h| h.eq_ignore_ascii_case("authorization: Bearer secret-key-1")),
+            "missing Bearer header in {authed:?}"
+        );
+        let anon = rx.recv().expect("anon headers");
+        assert!(
+            !anon.iter().any(|h| h.to_ascii_lowercase().starts_with("authorization:")),
+            "unexpected Authorization header in {anon:?}"
+        );
+    }
+
+    #[test]
+    fn parse_plot_keeps_fills_secondary_annotations_and_order() {
+        let plot = json!({
+            "data": [
+                {"type":"scatter","name":"zone","x":[100,1000],"y":[5,5],"fill":"tozeroy","fillcolor":"rgba(255,0,0,0.2)","line":{"color":"#ff0000"}},
+                {"type":"scatter","name":"main","x":[100,1000],"y":[1,2],"yaxis":"y2","line":{"color":"rgb(0,128,0)","dash":"dash","width":3}},
+                {"type":"bar","name":"bars","x":["a","b"],"y":[3,4]},
+                {"type":"scatterpolar","name":"radar","theta":[0,90],"r":[-5,-10]},
+                {"type":"scatterpolar","name":"spider","theta":["bass","treble"],"r":[1,2]}
+            ],
+            "layout": {
+                "title":{"text":"T"},
+                "xaxis":{"title":{"text":"Frequency (Hz)"},"type":"log"},
+                "yaxis":{"title":{"text":"SPL (dB)"},"range":[-40,10]},
+                "yaxis2":{"title":{"text":"DI (dB)"}},
+                "annotations":[{"text":"note","x":1000,"y":2}]
+            }
+        });
+        let data = parse_plot(&plot).unwrap();
+        assert_eq!(data.traces.len(), 5);
+        assert_eq!(data.traces[0].fill, Some(crate::types::TraceFill::ToZeroY));
+        assert!(data.traces[1].secondary_axis);
+        assert_eq!(data.traces[2].kind, crate::types::TraceKind::Bar);
+        assert_eq!(data.traces[2].categories, ["a", "b"]);
+        assert_eq!(data.traces[3].kind, crate::types::TraceKind::ScatterPolar);
+        assert_eq!(
+            data.traces[4].kind,
+            crate::types::TraceKind::ScatterPolarCategorical
+        );
+        assert_eq!(data.layout.annotations[0].text, "note");
+        assert!(data.layout.x_axis.log);
+        assert!(is_auth_error("HTTP status client error (401 Unauthorized)"));
+        assert!(!is_auth_error("HTTP status client error (404 Not Found)"));
+    }
+
+    #[test]
+    fn parse_plot_reads_hide_zero_line() {
+        let with_flag = json!({
+            "data": [{"type":"scatter","name":"main","x":[100,1000],"y":[1,2]}],
+            "layout": {"hide_zero_line": true}
+        });
+        assert!(parse_plot(&with_flag).unwrap().layout.hide_zero_line);
+        let without_flag = json!({
+            "data": [{"type":"scatter","name":"main","x":[100,1000],"y":[1,2]}],
+            "layout": {}
+        });
+        assert!(!parse_plot(&without_flag).unwrap().layout.hide_zero_line);
+    }
+
+    #[test]
+    fn spinorama_colormap_matches_python_stops() {
+        let scale = crate::types::Colormap::Spinorama.color_scale();
+        let low = scale(0.0);
+        assert!((low.b - 168.0 / 255.0_f32).abs() < 1e-6 && low.r == 0.0 && low.g == 0.0);
+        let high = scale(1.0);
+        assert!(
+            (high.r - 253.0 / 255.0_f32).abs() < 1e-6
+                && (high.g - 14.0 / 255.0_f32).abs() < 1e-6
+                && (high.b - 13.0 / 255.0_f32).abs() < 1e-6,
+            "high stop: {high:?}"
+        );
+        assert_eq!(crate::types::Colormap::default(), crate::types::Colormap::Spinorama);
+    }
+
+    #[test]
+    fn parse_plot_keeps_distinct_line_and_fill_colors() {
+        // Band traces carry both an outline colour and a zone colour;
+        // the fill colour must survive parsing even when a line colour
+        // is present (spinorama's ±dB zones).
+        let plot = json!({
+            "data": [
+                {"type":"scatter","name":"Band ±3dB","x":[20,20000,20000,20],"y":[3,3,-3,-3],"fill":"toself","fillcolor":"#E2F705","opacity":0.25,"line":{"color":"#0000ff"}}
+            ],
+            "layout": {"xaxis":{"type":"log"},"yaxis":{"range":[-45,5]}}
+        });
+        let data = parse_plot(&plot).unwrap();
+        let trace = &data.traces[0];
+        assert_eq!(trace.fill, Some(crate::types::TraceFill::ToSelf));
+        assert_eq!(
+            trace.fill_color,
+            Some(d3rs::color::D3Color::rgb(0xE2, 0xF7, 0x05))
+        );
+        assert_eq!(trace.color, d3rs::color::D3Color::rgb(0, 0, 0xFF));
+        assert!((trace.opacity - 0.25).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn parses_subplot_cells_traces_and_titles() {
+        let plot = json!({
+            "data": [
+                {"type": "scatter", "name": "eq", "x": [100.0, 1000.0], "y": [1.0, 2.0], "xaxis": "x", "yaxis": "y"},
+                {"type": "scatter", "name": "target", "x": [100.0, 1000.0], "y": [0.0, 1.0], "xaxis": "x2", "yaxis": "y2"},
+                {"type": "bar", "name": "err", "x": ["-1-0", "0-1"], "y": [3.0, 7.0], "xaxis": "x3", "yaxis": "y3"},
+                {"type": "scatter", "name": "spin", "x": [100.0, 1000.0], "y": [80.0, 85.0], "xaxis": "x4", "yaxis": "y4"}
+            ],
+            "layout": {
+                "title": {"text": "Sheet"},
+                "xaxis": {"domain": [0.0, 0.48], "type": "log"},
+                "yaxis": {"domain": [0.55, 1.0]},
+                "xaxis2": {"domain": [0.52, 1.0], "type": "log"},
+                "yaxis2": {"domain": [0.55, 1.0]},
+                "xaxis3": {"domain": [0.0, 0.48]},
+                "yaxis3": {"domain": [0.0, 0.45]},
+                "xaxis4": {"domain": [0.52, 1.0], "type": "log"},
+                "yaxis4": {"domain": [0.0, 0.45]},
+                "annotations": [
+                    {"text": "PEQ details", "x": 0.24, "y": 1.0, "xref": "paper", "yref": "paper", "showarrow": false},
+                    {"text": "PEQ v.s. Target", "x": 0.76, "y": 1.0, "xref": "paper", "yref": "paper", "showarrow": false},
+                    {"text": "Histogram", "x": 0.24, "y": 0.45, "xref": "paper", "yref": "paper", "showarrow": false},
+                    {"text": "Spin", "x": 0.76, "y": 0.45, "xref": "paper", "yref": "paper", "showarrow": false}
+                ]
+            }
+        });
+        let data = parse_plot(&plot).unwrap();
+        assert_eq!(data.layout.subplots.len(), 4);
+        assert_eq!(data.layout.subplots[0].title.as_deref(), Some("PEQ details"));
+        assert_eq!(data.layout.subplots[1].title.as_deref(), Some("PEQ v.s. Target"));
+        assert_eq!(data.layout.subplots[2].title.as_deref(), Some("Histogram"));
+        assert_eq!(data.layout.subplots[3].title.as_deref(), Some("Spin"));
+        assert_eq!(data.traces[0].subplot, 0);
+        assert_eq!(data.traces[1].subplot, 1);
+        assert_eq!(data.traces[2].subplot, 2);
+        assert_eq!(data.traces[2].kind, crate::types::TraceKind::Bar);
+        assert_eq!(data.traces[3].subplot, 3);
+        assert!(data.layout.annotations.is_empty());
+        assert!(data.layout.subplots[0].x_axis.log);
     }
 
     #[test]

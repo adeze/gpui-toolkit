@@ -8,7 +8,8 @@
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use super::{DEFAULT_FRAME_MIN_INTERVAL, DEFAULT_RESIZE_DEBOUNCE_INTERVAL};
 
@@ -46,8 +47,12 @@ impl SyncFrameThrottle {
     /// callback. A tick inside the minimum interval is counted as
     /// coalesced and reports false.
     pub fn should_forward(&self) -> bool {
-        let now = Instant::now();
         let mut last_forward = unpoison(self.last_forward.lock());
+        // Sample after acquiring the lock so concurrent claims use lock order.
+        self.claim(&mut last_forward, Instant::now())
+    }
+
+    fn claim(&self, last_forward: &mut Option<Instant>, now: Instant) -> bool {
         if last_forward.is_some_and(|last| now.duration_since(last) < self.min_interval) {
             self.coalesced.fetch_add(1, Ordering::Relaxed);
             return false;
@@ -172,13 +177,13 @@ mod tests {
     #[test]
     fn overdrive_is_coalesced_and_counted() {
         let throttle = SyncFrameThrottle::default();
-        let mut forwarded = 0;
-        for _ in 0..3 {
-            if throttle.should_forward() {
-                forwarded += 1;
-            }
-        }
-        assert_eq!(forwarded, 1);
+        let start = Instant::now();
+        let mut last_forward = unpoison(throttle.last_forward.lock());
+        assert!(throttle.claim(&mut last_forward, start));
+        assert!(!throttle.claim(&mut last_forward, start));
+        assert!(!throttle.claim(&mut last_forward, start + DEFAULT_FRAME_MIN_INTERVAL / 2));
+        assert_eq!(throttle.coalesced(), 2);
+        assert!(throttle.claim(&mut last_forward, start + DEFAULT_FRAME_MIN_INTERVAL));
         assert_eq!(throttle.coalesced(), 2);
     }
 

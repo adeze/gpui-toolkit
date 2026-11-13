@@ -1,205 +1,544 @@
-//! Point <-> cell field conversion.
-//!
-//! `point_data_to_cell_data` averages node values per cell (the VTK
-//! `PointDataToCellData`); `cell_data_to_point_data` averages the cells
-//! touching a point weighted by cell measure (volume or area), the VTK
-//! `CellDataToPointData`. Scalar and vector fields are supported.
+//! Validity-aware point/cell conversion with adaptive exact averaging.
 
 // Rust guideline compliant 2026-02-21
 
 use crate::TransformError;
-use gpui_mesh::{Association, CellType, DataSet, Field, FieldData};
+use crate::cell_mean::{CellWeights, ComputedRows, cell_means, cell_means_prepared};
+use gpui_mesh::{Association, CellType, DataSet, Field, FieldData, ValidatedDataSet};
 
-/// Converts a point field to a cell field by node averaging.
+pub(crate) fn blend(a: f64, b: f64, fraction: f64) -> f64 {
+    if fraction == 1.0 || a == b {
+        return b;
+    }
+    if fraction == 0.0 {
+        return a;
+    }
+    let result = a * (1.0 - fraction) + b * fraction;
+    if result.is_normal() {
+        return result;
+    }
+    // Finite convex inputs must remain bounded. Scaling also retains
+    // subnormal results when the individual weighted products underflow.
+    let scale = a.abs().max(b.abs());
+    ((a / scale) * (1.0 - fraction) + (b / scale) * fraction).clamp(-1.0, 1.0) * scale
+}
+
+fn point_means<const N: usize>(
+    dataset: &DataSet,
+    field: &Field,
+    values: &[[f64; N]],
+) -> Vec<[f64; N]> {
+    if dataset.cells.is_empty() {
+        return Vec::new();
+    }
+    let all_missing = field
+        .valid
+        .as_ref()
+        .is_some_and(|mask| mask.iter().all(|v| !*v));
+    if all_missing {
+        return vec![[f64::NAN; N]; dataset.cell_count()];
+    }
+    // A dense mesh reuses a field sign certificate; sparse selections inspect
+    // referenced values only. Within mixed fields, track actual cell signs so
+    // that a distant zero crossing cannot force every cell into exact arithmetic.
+    let mixed = (dataset.cells.connectivity.len() >= values.len()).then(|| {
+        crate::mean::has_mixed_rows(
+            values
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| field.valid.as_ref().is_none_or(|mask| mask[*i]))
+                .map(|(_, value)| value),
+        )
+    });
+    // Quantized data (for example f32 promoted to f64) often has an exact
+    // floating sum even with both signs. Certify the bounded fixed cell sizes
+    // once rather than paying for exact accumulation in every crossing cell.
+    let exact_float = mixed == Some(true)
+        && !dataset.cells.types.contains(&CellType::Polygon)
+        && exact_field_sums(values, field.valid.as_deref(), 8);
+    let small_sum =
+        (mixed == Some(true) && !exact_float && !dataset.cells.types.contains(&CellType::Polygon))
+            .then(|| {
+                crate::mean::SmallFieldSum::certify(
+                    values
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| field.valid.as_ref().is_none_or(|mask| mask[*i]))
+                        .map(|(_, row)| row),
+                    8,
+                )
+            })
+            .flatten();
+    // Dispatch once so each collection loop has one arithmetic strategy.
+    if let Some(plan) = small_sum {
+        if let Some(scale) = plan.integer_scale() {
+            collect_point_means(dataset, |nodes| {
+                integer_point_mean(nodes, values, field.valid.as_deref(), plan, |value| {
+                    (value * scale) as i64
+                })
+            })
+        } else {
+            collect_point_means(dataset, |nodes| {
+                integer_point_mean(nodes, values, field.valid.as_deref(), plan, |value| {
+                    plan.integer(value)
+                })
+            })
+        }
+    } else if mixed == Some(false) || exact_float {
+        // A certified sum needs direct division for arbitrary contributor
+        // counts. With complete power-of-two cells, reciprocal multiplication
+        // is exact and the loop can omit this per-cell arithmetic decision.
+        let direct = exact_float
+            && (field.valid.is_some()
+                || dataset
+                    .cells
+                    .types
+                    .iter()
+                    .any(|kind| !kind.node_count().is_power_of_two()));
+        if direct {
+            collect_point_means(dataset, |nodes| {
+                point_mean::<N, false, true>(nodes, values, field.valid.as_deref())
+            })
+        } else {
+            collect_point_means(dataset, |nodes| {
+                point_mean::<N, false, false>(nodes, values, field.valid.as_deref())
+            })
+        }
+    } else {
+        collect_point_means(dataset, |nodes| {
+            point_mean::<N, true, false>(nodes, values, field.valid.as_deref())
+        })
+    }
+}
+
+fn collect_point_means<const N: usize>(
+    dataset: &DataSet,
+    average: impl Fn(&[u32]) -> [f64; N],
+) -> Vec<[f64; N]> {
+    (0..dataset.cell_count())
+        .map(|cell| average(dataset.cells.cell(cell).unwrap()))
+        .collect()
+}
+
+#[inline]
+fn integer_point_mean<const N: usize>(
+    nodes: &[u32],
+    values: &[[f64; N]],
+    valid: Option<&[bool]>,
+    plan: crate::mean::SmallFieldSum,
+    decode: impl Fn(f64) -> i64,
+) -> [f64; N] {
+    let mut sums = [0; N];
+    let mut include = |node: u32| {
+        for (sum, &value) in sums.iter_mut().zip(&values[node as usize]) {
+            *sum += decode(value);
+        }
+    };
+    let count = if let Some(mask) = valid {
+        let mut count = 0;
+        for &node in nodes {
+            if mask[node as usize] {
+                include(node);
+                count += 1;
+            }
+        }
+        count
+    } else {
+        for &node in nodes {
+            include(node);
+        }
+        nodes.len()
+    };
+    if count == 0 {
+        [f64::NAN; N]
+    } else {
+        plan.averages(sums, count)
+    }
+}
+
+#[inline]
+fn point_mean<const N: usize, const TRACK_SIGNS: bool, const DIRECT_DIVISION: bool>(
+    nodes: &[u32],
+    values: &[[f64; N]],
+    valid: Option<&[bool]>,
+) -> [f64; N] {
+    let (sum, count, signs) = sum_nodes::<N, TRACK_SIGNS>(nodes, values, valid);
+    if count == 0 {
+        return [f64::NAN; N];
+    }
+    let inverse = 1.0 / count as f64;
+    if !crate::mean::has_mixed_signs(signs) && sum.iter().all(|v| v.is_finite()) {
+        if N == 1 || DIRECT_DIVISION {
+            sum.map(|v| v / count as f64)
+        } else {
+            sum.map(|v| v * inverse)
+        }
+    } else {
+        std::array::from_fn(|axis| {
+            if ((signs >> (2 * axis)) & 3) != 3 && sum[axis].is_finite() {
+                if N == 1 {
+                    sum[axis] / count as f64
+                } else {
+                    sum[axis] * inverse
+                }
+            } else {
+                let contributors = nodes
+                    .iter()
+                    .filter(|&&node| valid.is_none_or(|mask| mask[node as usize]))
+                    .map(|&node| values[node as usize][axis]);
+                crate::mean::exact_average(contributors)
+            }
+        })
+    }
+}
+
+fn exact_field_sums<const N: usize>(
+    values: &[[f64; N]],
+    valid: Option<&[bool]>,
+    max_nodes: usize,
+) -> bool {
+    crate::mean::certified_float_rows(
+        values
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| valid.is_none_or(|mask| mask[*index]))
+            .map(|(_, row)| row),
+        max_nodes,
+    )
+}
+
+#[inline]
+fn sum_nodes<const N: usize, const TRACK_SIGNS: bool>(
+    nodes: &[u32],
+    values: &[[f64; N]],
+    valid: Option<&[bool]>,
+) -> ([f64; N], usize, u16) {
+    let mut sum = [0.0; N];
+    let mut count = 0;
+    let mut signs = 0;
+    let mut include = |node: u32| {
+        count += 1;
+        for axis in 0..N {
+            let value = values[node as usize][axis];
+            sum[axis] += value;
+            if TRACK_SIGNS {
+                signs |= crate::mean::component_sign(value, axis);
+            }
+        }
+    };
+    if let Some(mask) = valid {
+        for &node in nodes {
+            if mask[node as usize] {
+                include(node);
+            }
+        }
+    } else {
+        for &node in nodes {
+            include(node);
+        }
+    }
+    (sum, count, signs)
+}
+
+fn append(
+    dataset: &DataSet,
+    mut field: Field,
+    source: &Field,
+    association: Association,
+    all_supported: bool,
+) -> DataSet {
+    field = finish_conversion(field, source, association, all_supported);
+    let mut output = dataset.clone();
+    insert_converted_field(&mut output, field);
+    output
+}
+
+fn finish_conversion(
+    mut field: Field,
+    source: &Field,
+    association: Association,
+    all_supported: bool,
+) -> Field {
+    field.association = association;
+    field.label.clone_from(&source.label);
+    field.unit.clone_from(&source.unit);
+    if all_supported {
+        field
+    } else {
+        crate::validity::finish(field, |_| true)
+    }
+}
+
+pub(crate) fn insert_converted_field(dataset: &mut DataSet, field: Field) {
+    let fields = match field.association {
+        Association::Point => &mut dataset.point_data,
+        Association::Cell => &mut dataset.cell_data,
+    };
+    fields.retain(|existing| existing.name != field.name);
+    fields.push(field);
+}
+
+/// Averages valid point values into cells, component by component.
+///
+/// Scalar, vector, tensor and complex fields use equal valid-node weights.
+/// Mixed-sign components and overflowing sums use an exact bounded average;
+/// same-sign ordinary sums retain the vectorized floating-point path.
+/// Cells with no valid contributors receive masked NaNs. Labels/units survive;
+/// an existing output name in cell data is replaced.
 ///
 /// # Errors
 ///
-/// Returns an error when the field is missing or has an unsupported shape.
+/// Returns an error for an invalid dataset or a missing point field.
 pub fn point_data_to_cell_data(
     dataset: &DataSet,
     field_name: &str,
     out_name: &str,
 ) -> Result<DataSet, TransformError> {
-    let field = dataset
-        .field(Association::Point, field_name)
-        .ok_or_else(|| TransformError::FieldNotFound(field_name.to_string()))?;
-    let mut out = dataset.clone();
-    match &field.data {
-        FieldData::Scalar(values) => {
-            let converted: Vec<f64> = (0..dataset.cell_count())
-                .map(|cell| {
-                    let nodes = dataset.cells.cell(cell).unwrap_or(&[]);
-                    if nodes.is_empty() {
-                        return 0.0;
-                    }
-                    nodes.iter().map(|&n| values[n as usize]).sum::<f64>() / nodes.len() as f64
-                })
-                .collect();
-            out.cell_data
-                .push(Field::scalar(out_name.to_string(), converted).on_cells());
-        }
-        FieldData::Vector(values) => {
-            let converted: Vec<[f64; 3]> = (0..dataset.cell_count())
-                .map(|cell| {
-                    let nodes = dataset.cells.cell(cell).unwrap_or(&[]);
-                    if nodes.is_empty() {
-                        return [0.0; 3];
-                    }
-                    let mut acc = [0.0; 3];
-                    for &n in nodes {
-                        let v = values[n as usize];
-                        acc[0] += v[0];
-                        acc[1] += v[1];
-                        acc[2] += v[2];
-                    }
-                    let inv = 1.0 / nodes.len() as f64;
-                    [acc[0] * inv, acc[1] * inv, acc[2] * inv]
-                })
-                .collect();
-            out.cell_data
-                .push(Field::vector(out_name.to_string(), converted).on_cells());
-        }
-        _ => {
-            return Err(TransformError::WrongFieldShape {
-                field: field_name.to_string(),
-                reason: "conversion supports scalar and vector fields".into(),
-            });
-        }
-    }
-    Ok(out)
+    point_data_to_cell_data_validated(dataset.validated()?, field_name, out_name)
 }
 
-/// Converts a cell field to a point field, weighted by cell measure.
+/// Converts a point field using an existing immutable validation view.
 ///
-/// Volume cells weight by volume, surface cells by area; points touched
-/// by no cell get zero.
+/// Has the same averaging/validity semantics as [`point_data_to_cell_data`],
+/// without repeating input validation. The borrow prevents source mutation.
 ///
 /// # Errors
 ///
-/// Returns an error when the field is missing or has an unsupported shape.
+/// Returns an error when the source field does not exist.
+pub fn point_data_to_cell_data_validated(
+    dataset: ValidatedDataSet<'_>,
+    field_name: &str,
+    out_name: &str,
+) -> Result<DataSet, TransformError> {
+    let dataset = dataset.as_dataset();
+    let field = dataset
+        .field(Association::Point, field_name)
+        .ok_or_else(|| TransformError::FieldNotFound(field_name.to_string()))?;
+    let converted = match &field.data {
+        FieldData::Scalar(values) => Field::scalar(
+            out_name,
+            point_means(dataset, field, values.as_chunks::<1>().0).into_flattened(),
+        ),
+        FieldData::Vector(values) => Field::vector(out_name, point_means(dataset, field, values)),
+        FieldData::Tensor(values) => Field::tensor(out_name, point_means(dataset, field, values)),
+        FieldData::Complex(values) => Field::complex(out_name, point_means(dataset, field, values)),
+    };
+    Ok(append(
+        dataset,
+        converted,
+        field,
+        Association::Cell,
+        field.valid.is_none(),
+    ))
+}
+
+/// Averages valid incident cells into points by positive geometric measure.
+///
+/// At each point only the highest supported cell dimension contributes: volume,
+/// area, length, then unit vertex weight. Degenerate/nonrepresentable measures
+/// and masked cells do not contribute. No supported contribution means a masked
+/// NaN. All field shapes average componentwise; labels/units survive and an
+/// existing output name in point data is replaced.
+/// Means are correctly rounded with respect to the computed finite binary
+/// measures, even when individual products or sums cannot be represented in f64.
+/// Certified fields use scatter reductions; general cases use compact
+/// point/cell incidence and bounded stack accumulation. Common weights stay
+/// inline with an optional excluded-cell bitmap. General reductions can add
+/// dense weights and incidence storage proportional to cells and connectivity.
+///
+/// # Errors
+///
+/// Returns an error for an invalid dataset or a missing cell field.
 pub fn cell_data_to_point_data(
     dataset: &DataSet,
     field_name: &str,
     out_name: &str,
 ) -> Result<DataSet, TransformError> {
+    cell_data_to_point_data_validated(dataset.validated()?, field_name, out_name)
+}
+
+/// Converts a cell field using an existing immutable validation view.
+///
+/// Has the same averaging/validity semantics as [`cell_data_to_point_data`],
+/// without repeating input validation. The borrow prevents source mutation.
+///
+/// # Errors
+///
+/// Returns an error when the source field does not exist.
+pub fn cell_data_to_point_data_validated(
+    dataset: ValidatedDataSet<'_>,
+    field_name: &str,
+    out_name: &str,
+) -> Result<DataSet, TransformError> {
+    let uniform = dataset.uniform_cell_dimension().is_some();
+    let dataset = dataset.as_dataset();
     let field = dataset
         .field(Association::Cell, field_name)
         .ok_or_else(|| TransformError::FieldNotFound(field_name.to_string()))?;
-    let weights: Vec<f64> = (0..dataset.cell_count())
-        .map(|cell| cell_measure(dataset, cell))
-        .collect();
-    let mut out = dataset.clone();
-    match &field.data {
-        FieldData::Scalar(values) => {
-            let mut acc = vec![0.0f64; dataset.point_count()];
-            let mut wsum = vec![0.0f64; dataset.point_count()];
-            for cell in 0..dataset.cell_count() {
-                let w = weights[cell].max(1e-300);
-                for &n in dataset.cells.cell(cell).unwrap_or(&[]) {
-                    acc[n as usize] += values[cell] * w;
-                    wsum[n as usize] += w;
-                }
-            }
-            let converted: Vec<f64> = acc
-                .iter()
-                .zip(wsum.iter())
-                .map(|(a, w)| if *w > 0.0 { a / w } else { 0.0 })
-                .collect();
-            out.point_data
-                .push(Field::scalar(out_name.to_string(), converted));
-        }
-        FieldData::Vector(values) => {
-            let mut acc = vec![[0.0f64; 3]; dataset.point_count()];
-            let mut wsum = vec![0.0f64; dataset.point_count()];
-            for cell in 0..dataset.cell_count() {
-                let w = weights[cell].max(1e-300);
-                for &n in dataset.cells.cell(cell).unwrap_or(&[]) {
-                    let v = values[cell];
-                    acc[n as usize][0] += v[0] * w;
-                    acc[n as usize][1] += v[1] * w;
-                    acc[n as usize][2] += v[2] * w;
-                    wsum[n as usize] += w;
-                }
-            }
-            let converted: Vec<[f64; 3]> = acc
-                .iter()
-                .zip(wsum.iter())
-                .map(|(a, w)| {
-                    if *w > 0.0 {
-                        [a[0] / w, a[1] / w, a[2] / w]
-                    } else {
-                        [0.0; 3]
-                    }
-                })
-                .collect();
-            out.point_data
-                .push(Field::vector(out_name.to_string(), converted));
-        }
-        _ => {
-            return Err(TransformError::WrongFieldShape {
-                field: field_name.to_string(),
-                reason: "conversion supports scalar and vector fields".into(),
-            });
-        }
-    }
-    Ok(out)
+    let mut converted = converted_cell_field(dataset, field, uniform, None);
+    converted.name = out_name.into();
+    let mut output = dataset.clone();
+    insert_converted_field(&mut output, converted);
+    Ok(output)
 }
 
-/// Cell measure: volume for volume cells, area for surface cells.
-fn cell_measure(dataset: &DataSet, cell: usize) -> f64 {
-    let nodes = dataset.cells.cell(cell).unwrap_or(&[]);
-    if nodes.len() < 3 {
-        return 0.0;
+fn cell_rows<const N: usize>(
+    dataset: &DataSet,
+    field: &Field,
+    values: &[[f64; N]],
+    uniform: bool,
+    geometry: Option<&CellWeights>,
+) -> ComputedRows<N> {
+    if let Some(weights) = geometry {
+        cell_means_prepared(dataset, field, values, uniform, weights)
+    } else {
+        cell_means(dataset, field, values, uniform)
     }
-    let p: Vec<[f64; 3]> = nodes
+}
+
+pub(crate) fn converted_cell_field(
+    dataset: &DataSet,
+    field: &Field,
+    uniform: bool,
+    geometry: Option<&CellWeights>,
+) -> Field {
+    let (converted, all_supported) = match &field.data {
+        FieldData::Scalar(values) => {
+            let rows = cell_rows(dataset, field, values.as_chunks::<1>().0, uniform, geometry);
+            (
+                Field::scalar(field.name.clone(), rows.values.into_flattened()),
+                rows.all_supported,
+            )
+        }
+        FieldData::Vector(values) => {
+            let rows = cell_rows(dataset, field, values, uniform, geometry);
+            (
+                Field::vector(field.name.clone(), rows.values),
+                rows.all_supported,
+            )
+        }
+        FieldData::Tensor(values) => {
+            let rows = cell_rows(dataset, field, values, uniform, geometry);
+            (
+                Field::tensor(field.name.clone(), rows.values),
+                rows.all_supported,
+            )
+        }
+        FieldData::Complex(values) => {
+            let rows = cell_rows(dataset, field, values, uniform, geometry);
+            (
+                Field::complex(field.name.clone(), rows.values),
+                rows.all_supported,
+            )
+        }
+    };
+    finish_conversion(converted, field, Association::Point, all_supported)
+}
+
+fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    std::array::from_fn(|axis| a[axis] - b[axis])
+}
+fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+fn edge_scale(vectors: &[[f64; 3]]) -> f64 {
+    vectors
         .iter()
-        .map(|&n| dataset.positions[n as usize])
-        .collect();
-    match dataset.cells.types[cell] {
-        CellType::Triangle | CellType::Quad => {
-            // Fan-triangulate and sum areas.
-            let mut area = 0.0;
-            for i in 1..p.len() - 1 {
-                area += triangle_area(p[0], p[i], p[i + 1]);
-            }
-            area
-        }
-        kind => {
-            // Volume: sum the crate's consistent tetrahedralisation.
-            crate::streamline::tetrahedralize(kind, nodes)
-                .iter()
-                .map(|tet| {
-                    tet_volume(
-                        dataset.positions[tet[0] as usize],
-                        dataset.positions[tet[1] as usize],
-                        dataset.positions[tet[2] as usize],
-                        dataset.positions[tet[3] as usize],
-                    )
-                })
-                .sum()
-        }
-    }
+        .flatten()
+        .map(|v| v.abs())
+        .fold(0.0, f64::max)
+}
+fn determinant(a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> f64 {
+    let bc = cross(b, c);
+    a[0] * bc[0] + a[1] * bc[1] + a[2] * bc[2]
 }
 
 fn triangle_area(a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> f64 {
-    let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-    let ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
-    let cross = [
-        ab[1] * ac[2] - ab[2] * ac[1],
-        ab[2] * ac[0] - ab[0] * ac[2],
-        ab[0] * ac[1] - ab[1] * ac[0],
-    ];
-    0.5 * (cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]).sqrt()
+    let ab = sub(b, a);
+    let ac = sub(c, a);
+    let area = 0.5 * crate::calculator::magnitude(cross(ab, ac));
+    if area.is_finite() && area > 0.0 {
+        return area;
+    }
+    let scale = edge_scale(&[ab, ac]);
+    if scale == 0.0 || !scale.is_finite() {
+        return area;
+    }
+    let normalized = cross(ab.map(|v| v / scale), ac.map(|v| v / scale));
+    (0.5 * crate::calculator::magnitude(normalized) * scale) * scale
+}
+
+fn polygon_area(dataset: &DataSet, nodes: &[u32]) -> f64 {
+    let origin = dataset.positions[nodes[0] as usize];
+    let mut sum = [0.0; 3];
+    let mut scale = 0.0f64;
+    for pair in nodes[1..].windows(2) {
+        let ab = sub(dataset.positions[pair[0] as usize], origin);
+        let ac = sub(dataset.positions[pair[1] as usize], origin);
+        scale = scale.max(edge_scale(&[ab, ac]));
+        for (value, component) in sum.iter_mut().zip(cross(ab, ac)) {
+            *value += component;
+        }
+    }
+    let area = 0.5 * crate::calculator::magnitude(sum);
+    if area.is_finite() && area > 0.0 || scale == 0.0 || !scale.is_finite() {
+        return area;
+    }
+    let mut sum = [0.0; 3];
+    for pair in nodes[1..].windows(2) {
+        let ab = sub(dataset.positions[pair[0] as usize], origin).map(|v| v / scale);
+        let ac = sub(dataset.positions[pair[1] as usize], origin).map(|v| v / scale);
+        for (value, component) in sum.iter_mut().zip(cross(ab, ac)) {
+            *value += component;
+        }
+    }
+    (0.5 * crate::calculator::magnitude(sum) * scale) * scale
 }
 
 fn tet_volume(a: [f64; 3], b: [f64; 3], c: [f64; 3], d: [f64; 3]) -> f64 {
-    let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-    let ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
-    let ad = [d[0] - a[0], d[1] - a[1], d[2] - a[2]];
-    (ab[0] * (ac[1] * ad[2] - ac[2] * ad[1]) - ab[1] * (ac[0] * ad[2] - ac[2] * ad[0])
-        + ab[2] * (ac[0] * ad[1] - ac[1] * ad[0]))
-        .abs()
-        / 6.0
+    let ab = sub(b, a);
+    let ac = sub(c, a);
+    let ad = sub(d, a);
+    let volume = determinant(ab, ac, ad).abs() / 6.0;
+    if volume.is_finite() && volume > 0.0 {
+        return volume;
+    }
+    let scale = edge_scale(&[ab, ac, ad]);
+    if scale == 0.0 || !scale.is_finite() {
+        return volume;
+    }
+    let det = determinant(
+        ab.map(|v| v / scale),
+        ac.map(|v| v / scale),
+        ad.map(|v| v / scale),
+    );
+    ((det.abs() * scale / 6.0) * scale) * scale
+}
+
+pub(crate) fn cell_measure(dataset: &DataSet, cell: usize) -> f64 {
+    let nodes = dataset.cells.cell(cell).unwrap_or(&[]);
+    let p = |index: usize| dataset.positions[nodes[index] as usize];
+    match dataset.cells.types[cell] {
+        CellType::Vertex => 1.0,
+        CellType::Line => crate::calculator::magnitude(sub(p(1), p(0))),
+        CellType::Triangle => triangle_area(p(0), p(1), p(2)),
+        CellType::Quad => triangle_area(p(0), p(1), p(2)) + triangle_area(p(0), p(2), p(3)),
+        CellType::Polygon => polygon_area(dataset, nodes),
+        kind => gpui_mesh::tetrahedra(kind, nodes)
+            .map(|tet| {
+                tet_volume(
+                    dataset.positions[tet[0] as usize],
+                    dataset.positions[tet[1] as usize],
+                    dataset.positions[tet[2] as usize],
+                    dataset.positions[tet[3] as usize],
+                )
+            })
+            .sum(),
+    }
 }
 
 #[cfg(test)]

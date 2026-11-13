@@ -12,28 +12,10 @@ use crate::camera::Camera;
 use crate::scene::ClipPlane;
 use crate::transfer::TransferFunction;
 use crate::{Frame, SceneError};
-use gpui_mesh::{Association, CellType, DataSet};
+use gpui_mesh::{Association, DataSet, Field, FieldData};
+use std::sync::Arc;
 
-fn tetrahedralize(kind: CellType, n: &[u32]) -> Vec<[u32; 4]> {
-    match kind {
-        CellType::Tetra => vec![[n[0], n[1], n[2], n[3]]],
-        CellType::Hexahedron => vec![
-            [n[0], n[1], n[2], n[6]],
-            [n[0], n[2], n[3], n[6]],
-            [n[0], n[3], n[7], n[6]],
-            [n[0], n[7], n[4], n[6]],
-            [n[0], n[4], n[5], n[6]],
-            [n[0], n[5], n[1], n[6]],
-        ],
-        CellType::Wedge => vec![
-            [n[0], n[1], n[2], n[3]],
-            [n[1], n[2], n[3], n[4]],
-            [n[2], n[3], n[4], n[5]],
-        ],
-        CellType::Pyramid => vec![[n[0], n[1], n[2], n[4]], [n[0], n[2], n[3], n[4]]],
-        _ => Vec::new(),
-    }
-}
+use gpui_mesh::tetrahedra as tetrahedralize;
 
 fn barycentric(tet: [[f64; 3]; 4], p: [f64; 3]) -> Option<[f64; 4]> {
     let (a, b, c, d) = (tet[0], tet[1], tet[2], tet[3]);
@@ -75,13 +57,15 @@ struct TetGrid {
 }
 
 impl TetGrid {
-    fn build(dataset: &DataSet, bounds: gpui_mesh::Bounds) -> Self {
+    fn build(dataset: &DataSet, field: &Field, bounds: gpui_mesh::Bounds) -> Self {
         let mut tets = Vec::new();
         for cell in 0..dataset.cell_count() {
             let kind = dataset.cells.types[cell];
             if kind.is_volume() {
                 let nodes = dataset.cells.cell(cell).unwrap_or(&[]);
-                tets.extend(tetrahedralize(kind, nodes));
+                tets.extend(tetrahedralize(kind, nodes).filter(|tet| {
+                    field.valid.is_none() || tet.iter().all(|&node| field.is_valid(node as usize))
+                }));
             }
         }
         // About 8 grid cells per axis per 1000 tets, clamped to sane sizes.
@@ -126,7 +110,7 @@ impl TetGrid {
         }
     }
 
-    fn sample(&self, dataset: &DataSet, scalars: &[f64], point: [f64; 3]) -> Option<f64> {
+    fn sample(&self, positions: &[[f64; 3]], scalars: &[f64], point: [f64; 3]) -> Option<f64> {
         let mut grid_index = [0usize; 3];
         for axis in 0..3 {
             let c = ((point[axis] - self.origin[axis]) / self.cell[axis]).floor();
@@ -141,18 +125,18 @@ impl TetGrid {
         for &tet_index in bucket {
             let tet = self.tets[tet_index as usize];
             let corners = [
-                dataset.positions[tet[0] as usize],
-                dataset.positions[tet[1] as usize],
-                dataset.positions[tet[2] as usize],
-                dataset.positions[tet[3] as usize],
+                positions[tet[0] as usize],
+                positions[tet[1] as usize],
+                positions[tet[2] as usize],
+                positions[tet[3] as usize],
             ];
             if let Some(w) = barycentric(corners, point) {
-                return Some(
-                    w.iter()
-                        .enumerate()
-                        .map(|(i, weight)| weight * scalars[tet[i] as usize])
-                        .sum(),
-                );
+                let value: f64 = w
+                    .iter()
+                    .enumerate()
+                    .map(|(i, weight)| weight * scalars[tet[i] as usize])
+                    .sum();
+                return value.is_finite().then_some(value);
             }
         }
         None
@@ -184,10 +168,13 @@ impl Default for VolumeOptions {
 ///
 /// Building the grid is the expensive step; retaining it makes per-frame
 /// raycasting (movies, interactive camera moves) pay only for marching.
+/// Positions and selected scalars share immutable source storage; unrelated
+/// fields are not retained. Only tetrahedra with four valid scalar nodes are
+/// indexed, so wholly missing fields render as background.
 #[derive(Debug)]
 pub struct VolumeRenderer {
-    dataset: DataSet,
-    scalars: Vec<f64>,
+    positions: Arc<[[f64; 3]]>,
+    scalars: Arc<[f64]>,
     bounds: gpui_mesh::Bounds,
     grid: TetGrid,
 }
@@ -197,29 +184,29 @@ impl VolumeRenderer {
     ///
     /// # Errors
     ///
-    /// Returns an error for a missing or non-scalar field, or a dataset
-    /// without volume cells.
+    /// Returns an error for an invalid dataset, a missing/non-scalar field,
+    /// or a dataset without volume cells.
     pub fn new(dataset: &DataSet, field_name: &str) -> Result<Self, SceneError> {
+        dataset.validate()?;
         let field = dataset
             .field(Association::Point, field_name)
             .ok_or_else(|| SceneError::FieldNotFound(field_name.to_string()))?;
-        let scalars = field
-            .as_scalar()
-            .ok_or_else(|| SceneError::FieldNotFound(field_name.to_string()))?
-            .to_vec();
+        let FieldData::Scalar(scalars) = &field.data else {
+            return Err(SceneError::FieldNotFound(field_name.to_string()));
+        };
         let bounds = dataset
             .bounds()
             .ok_or_else(|| SceneError::FieldNotFound(field_name.to_string()))?;
-        let grid = TetGrid::build(dataset, bounds);
-        if grid.tets.is_empty() {
+        if !dataset.cells.types.iter().any(|kind| kind.is_volume()) {
             return Err(SceneError::FieldNotFound(format!(
                 "dataset '{}' holds no volume cells",
                 dataset.id
             )));
         }
+        let grid = TetGrid::build(dataset, field, bounds);
         Ok(Self {
-            dataset: dataset.clone(),
-            scalars,
+            positions: dataset.positions.clone(),
+            scalars: scalars.clone(),
             bounds,
             grid,
         })
@@ -229,7 +216,8 @@ impl VolumeRenderer {
     ///
     /// # Errors
     ///
-    /// Returns an error for a zero render size.
+    /// Returns an error for invalid dimensions, exceeded default memory limits,
+    /// allocation failure, or a singular camera matrix.
     pub fn render(
         &self,
         transfer: &TransferFunction,
@@ -238,67 +226,100 @@ impl VolumeRenderer {
         height: u32,
         options: &VolumeOptions,
     ) -> Result<Frame, SceneError> {
-        let dataset = &self.dataset;
+        self.render_with_limits(
+            transfer,
+            camera,
+            width,
+            height,
+            options,
+            crate::RenderLimits::default(),
+        )
+    }
+
+    /// Raycasts a frame within explicit working-memory limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid dimensions, exceeded limits, allocation
+    /// failure, or a singular camera matrix.
+    pub fn render_with_limits(
+        &self,
+        transfer: &TransferFunction,
+        camera: &Camera,
+        width: u32,
+        height: u32,
+        options: &VolumeOptions,
+        limits: crate::RenderLimits,
+    ) -> Result<Frame, SceneError> {
+        let transfer = transfer.prepare()?;
+        crate::scene::validate_rgba(options.background)?;
+        let pixels = limits.pixel_count(width, height, 4)?;
+        let positions = &self.positions;
         let scalars: &[f64] = &self.scalars;
         let bounds = self.bounds;
         let grid = &self.grid;
-        if width == 0 || height == 0 {
-            return Err(SceneError::InvalidSize(width, height));
-        }
         let aspect = width as f32 / height as f32;
-        let view_projection = camera.view_projection(aspect);
-        let inverse = invert4(view_projection)
-            .ok_or_else(|| SceneError::FieldNotFound("camera matrix is singular".into()))?;
-        let eye = camera.eye();
-        let eye64 = [f64::from(eye[0]), f64::from(eye[1]), f64::from(eye[2])];
+        let origin = bounds.center();
+        let rays = camera.ray_grid_relative_to(origin, aspect)?;
+        let local_bounds = gpui_mesh::Bounds {
+            min: std::array::from_fn(|axis| bounds.min[axis] - origin[axis]),
+            max: std::array::from_fn(|axis| bounds.max[axis] - origin[axis]),
+        };
+        let planes = crate::scene::local_planes(&options.clip_planes, origin)?;
         let diagonal = bounds.diagonal();
         let step = (diagonal * options.step_fraction).max(diagonal / 4096.0);
         let bg = options.background;
 
-        let mut rgba = vec![0u8; (width * height * 4) as usize];
+        let mut rgba = crate::limits::frame_buffer(pixels * 4, 0u8)?;
+        if grid.tets.is_empty() {
+            for index in (0..rgba.len()).step_by(4) {
+                write_pixel(&mut rgba, index, bg);
+            }
+            return Ok(Frame {
+                width,
+                height,
+                rgba,
+            });
+        }
         for y in 0..height {
             for x in 0..width {
-                let idx = ((y * width + x) * 4) as usize;
-                // Unproject the pixel centre at the near and far planes.
+                let idx = (y as usize * width as usize + x as usize) * 4;
+                // Analytic near/far-plane rays preserve both orthographic
+                // projection and local precision, without per-pixel inversion.
                 let ndc_x = (x as f32 + 0.5) / width as f32 * 2.0 - 1.0;
                 let ndc_y = 1.0 - (y as f32 + 0.5) / height as f32 * 2.0;
-                let Some(far_point) = unproject(&inverse, [ndc_x, ndc_y, 1.0]) else {
-                    write_pixel(&mut rgba, idx, bg);
-                    continue;
-                };
-                let mut dir = [
-                    far_point[0] - eye64[0],
-                    far_point[1] - eye64[1],
-                    far_point[2] - eye64[2],
-                ];
+                let [near_point, far_point] = rays.segment([ndc_x, ndc_y]);
+                let mut dir =
+                    std::array::from_fn::<_, 3, _>(|axis| far_point[axis] - near_point[axis]);
                 let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
                 if len < 1e-300 {
                     write_pixel(&mut rgba, idx, bg);
                     continue;
                 }
                 dir = [dir[0] / len, dir[1] / len, dir[2] / len];
-                let Some((t_enter, t_exit)) = ray_bounds(eye64, dir, bounds) else {
+                let Some((t_enter, t_exit)) = ray_bounds(near_point, dir, local_bounds) else {
                     write_pixel(&mut rgba, idx, bg);
                     continue;
                 };
+                let t_exit = t_exit.min(len);
                 // Front-to-back compositing with early termination.
                 let mut accumulated = [0.0f32; 4];
                 let mut t = t_enter;
                 while t < t_exit && accumulated[3] < 0.98 {
                     let point = [
-                        eye64[0] + dir[0] * t,
-                        eye64[1] + dir[1] * t,
-                        eye64[2] + dir[2] * t,
+                        near_point[0] + dir[0] * t,
+                        near_point[1] + dir[1] * t,
+                        near_point[2] + dir[2] * t,
                     ];
                     t += step;
-                    if options
-                        .clip_planes
-                        .iter()
-                        .any(|plane| plane.distance(point) < 0.0)
-                    {
+                    if planes.iter().any(|plane| plane.distance(point) < 0.0) {
                         continue;
                     }
-                    let Some(value) = grid.sample(dataset, scalars, point) else {
+                    let Some(value) = grid.sample(
+                        positions,
+                        scalars,
+                        std::array::from_fn(|axis| point[axis] + origin[axis]),
+                    ) else {
                         continue;
                     };
                     let colour = transfer.map(value);
@@ -314,16 +335,17 @@ impl VolumeRenderer {
                     accumulated[2] += weight * colour[2];
                     accumulated[3] += weight;
                 }
-                let out = [
-                    accumulated[0] + (1.0 - accumulated[3]) * bg[0],
-                    accumulated[1] + (1.0 - accumulated[3]) * bg[1],
-                    accumulated[2] + (1.0 - accumulated[3]) * bg[2],
-                    1.0,
-                ];
-                rgba[idx] = (out[0].clamp(0.0, 1.0) * 255.0) as u8;
-                rgba[idx + 1] = (out[1].clamp(0.0, 1.0) * 255.0) as u8;
-                rgba[idx + 2] = (out[2].clamp(0.0, 1.0) * 255.0) as u8;
-                rgba[idx + 3] = 255;
+                let remaining = 1.0 - accumulated[3];
+                let alpha = accumulated[3] + remaining * bg[3];
+                let mut out = [0.0; 4];
+                if alpha > 0.0 {
+                    for channel in 0..3 {
+                        out[channel] =
+                            (accumulated[channel] + remaining * bg[channel] * bg[3]) / alpha;
+                    }
+                }
+                out[3] = alpha;
+                write_pixel(&mut rgba, idx, out);
             }
         }
         Ok(Frame {
@@ -360,18 +382,6 @@ fn write_pixel(rgba: &mut [u8], idx: usize, colour: [f32; 4]) {
     rgba[idx + 1] = (colour[1].clamp(0.0, 1.0) * 255.0) as u8;
     rgba[idx + 2] = (colour[2].clamp(0.0, 1.0) * 255.0) as u8;
     rgba[idx + 3] = (colour[3].clamp(0.0, 1.0) * 255.0) as u8;
-}
-
-fn unproject(inverse: &[f32; 16], ndc: [f32; 3]) -> Option<[f64; 3]> {
-    let clip = crate::camera::transform(inverse, ndc);
-    if clip[3].abs() < 1e-12 {
-        return None;
-    }
-    Some([
-        f64::from(clip[0] / clip[3]),
-        f64::from(clip[1] / clip[3]),
-        f64::from(clip[2] / clip[3]),
-    ])
 }
 
 /// Slab intersection of a ray with the dataset bounds.
@@ -450,6 +460,90 @@ mod tests {
     use crate::camera::multiply;
     use gpui_mesh::Field;
 
+    #[test]
+    fn missing_volume_support_excludes_finite_placeholders_and_masked_nans() {
+        let malformed = DataSet::structured_grid("short", [2; 3], [0.0; 3], [1.0; 3])
+            .unwrap()
+            .with_field(gpui_mesh::Field::scalar("p", vec![0.5; 7]));
+        assert!(matches!(
+            VolumeRenderer::new(&malformed, "p"),
+            Err(SceneError::Mesh(
+                gpui_mesh::MeshError::FieldLengthMismatch { .. }
+            ))
+        ));
+        for placeholder in [123.0, f64::NAN] {
+            let mut field = gpui_mesh::Field::scalar("p", vec![placeholder; 8]);
+            field.valid = Some(vec![false; 8].into());
+            let dataset = DataSet::structured_grid("missing", [2; 3], [0.0; 3], [1.0; 3])
+                .unwrap()
+                .with_field(field);
+            let renderer = VolumeRenderer::new(&dataset, "p").unwrap();
+            assert!(renderer.grid.tets.is_empty());
+            let options = VolumeOptions {
+                background: [0.2, 0.4, 0.6, 1.0],
+                ..Default::default()
+            };
+            let frame = renderer
+                .render(
+                    &TransferFunction::viridis([0.0, 1.0]),
+                    &Camera::fitted(dataset.bounds().unwrap()),
+                    24,
+                    24,
+                    &options,
+                )
+                .unwrap();
+            assert!(
+                frame
+                    .rgba
+                    .chunks_exact(4)
+                    .all(|pixel| pixel == [51, 102, 153, 255])
+            );
+        }
+        let mut field = gpui_mesh::Field::scalar("p", vec![0.5; 8]);
+        field.valid = Some(vec![true, false, true, true, true, true, true, true].into());
+        let dataset = DataSet::structured_grid("partial", [2; 3], [0.0; 3], [1.0; 3])
+            .unwrap()
+            .with_field(field);
+        let renderer = VolumeRenderer::new(&dataset, "p").unwrap();
+        assert_eq!(renderer.grid.tets.len(), 4);
+        assert_eq!(
+            renderer
+                .grid
+                .sample(&renderer.positions, &renderer.scalars, [0.9, 0.1, 0.1]),
+            None
+        );
+        assert!(
+            renderer
+                .grid
+                .sample(&renderer.positions, &renderer.scalars, [0.1, 0.9, 0.5])
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn retained_volume_shares_geometry_and_scalars_without_retaining_other_fields() {
+        let dataset = DataSet::structured_grid("shared", [2; 3], [0.0; 3], [1.0; 3])
+            .unwrap()
+            .with_field(gpui_mesh::Field::scalar("p", vec![0.5; 8]))
+            .with_field(gpui_mesh::Field::vector("unrelated", vec![[1.0; 3]; 8]));
+        let renderer = VolumeRenderer::new(&dataset, "p").unwrap();
+        let FieldData::Scalar(scalars) = &dataset.point_data[0].data else {
+            unreachable!()
+        };
+        let FieldData::Vector(unrelated) = &dataset.point_data[1].data else {
+            unreachable!()
+        };
+        assert!(Arc::ptr_eq(&renderer.positions, &dataset.positions));
+        assert!(Arc::ptr_eq(&renderer.scalars, scalars));
+        let weak_selected = Arc::downgrade(scalars);
+        let weak_unrelated = Arc::downgrade(unrelated);
+        drop(dataset);
+        assert!(weak_selected.upgrade().is_some());
+        assert!(weak_unrelated.upgrade().is_none());
+        drop(renderer);
+        assert!(weak_selected.upgrade().is_none());
+    }
+
     fn gaussian_room() -> DataSet {
         let mut ds = DataSet::structured_grid("room", [10, 10, 10], [-1.0; 3], [0.2; 3]).unwrap();
         let values: Vec<f64> = ds
@@ -527,6 +621,42 @@ mod tests {
     }
 
     #[test]
+    fn volume_plane_equations_ignore_normal_scale_and_tangential_origins() {
+        let ds = gaussian_room();
+        let renderer = VolumeRenderer::new(&ds, "pressure").unwrap();
+        let camera = Camera::fitted(ds.bounds().unwrap());
+        let transfer = TransferFunction::viridis([0.0, 1.0]);
+        let mut options = VolumeOptions {
+            clip_planes: vec![ClipPlane {
+                origin: [0.125, 0.0, 0.0],
+                normal: [1.0, 1.0, 0.0],
+            }],
+            ..VolumeOptions::default()
+        };
+        let reference = renderer
+            .render(&transfer, &camera, 24, 24, &options)
+            .unwrap();
+        for magnitude in [1e-300, 1e300] {
+            options.clip_planes[0] = ClipPlane {
+                origin: [1e12 + 0.125, -1e12, 1e250],
+                normal: [magnitude, magnitude, 0.0],
+            };
+            assert_eq!(
+                reference.rgba,
+                renderer
+                    .render(&transfer, &camera, 24, 24, &options)
+                    .unwrap()
+                    .rgba
+            );
+        }
+        options.clip_planes[0].normal[0] = f64::NAN;
+        assert!(matches!(
+            renderer.render(&transfer, &camera, 24, 24, &options),
+            Err(SceneError::InvalidClipPlane(_))
+        ));
+    }
+
+    #[test]
     fn invert_round_trips() {
         let camera = Camera::default();
         let m = camera.view_projection(1.5);
@@ -538,6 +668,198 @@ mod tests {
                 "diag {i}: {}",
                 product[i * 4 + i]
             );
+        }
+    }
+
+    #[test]
+    fn orthographic_volume_size_is_distance_invariant_and_obeys_near_far() {
+        let dataset = DataSet::structured_grid("box", [3; 3], [-1.0; 3], [1.0; 3])
+            .unwrap()
+            .with_field(Field::scalar("p", vec![0.5; 27]));
+        let renderer = VolumeRenderer::new(&dataset, "p").unwrap();
+        let transfer = TransferFunction::from_stops([0.0, 1.0], &[(0.0, [1.0, 0.0, 0.0, 0.2])]);
+        let options = VolumeOptions {
+            background: [0.0, 0.0, 0.0, 1.0],
+            ..VolumeOptions::default()
+        };
+        let camera = Camera {
+            azimuth: 0.0,
+            elevation: 0.0,
+            distance: 2.5,
+            near: 0.1,
+            far: 8.0,
+            projection: crate::Projection::Orthographic { half_height: 1.5 },
+            ..Camera::default()
+        };
+        let draw = |camera: &Camera| {
+            renderer
+                .render(&transfer, camera, 24, 24, &options)
+                .unwrap()
+        };
+        let reference = draw(&camera);
+        assert!(
+            reference
+                .rgba
+                .chunks_exact(4)
+                .filter(|pixel| pixel[0] > 10)
+                .count()
+                > 100
+        );
+        assert_eq!(
+            reference.rgba,
+            draw(&Camera {
+                distance: 5.5,
+                ..camera
+            })
+            .rgba
+        );
+        for clipped in [
+            Camera {
+                distance: 3.0,
+                far: 1.5,
+                ..camera
+            },
+            Camera {
+                distance: 3.0,
+                near: 4.5,
+                ..camera
+            },
+        ] {
+            assert!(
+                draw(&clipped)
+                    .rgba
+                    .chunks_exact(4)
+                    .all(|pixel| pixel == [0, 0, 0, 255])
+            );
+        }
+    }
+
+    #[test]
+    fn volume_compositing_retains_background_and_sample_alpha() {
+        let dataset = DataSet::structured_grid("alpha", [3; 3], [-1.0; 3], [1.0; 3])
+            .unwrap()
+            .with_field(Field::scalar("p", vec![0.5; 27]));
+        let renderer = VolumeRenderer::new(&dataset, "p").unwrap();
+        let camera = Camera {
+            azimuth: 0.0,
+            elevation: 0.0,
+            distance: 3.0,
+            projection: crate::Projection::Orthographic { half_height: 1.5 },
+            ..Camera::default()
+        };
+        let transfer =
+            |alpha| TransferFunction::from_stops([0.0, 1.0], &[(0.0, [1.0, 0.0, 0.0, alpha])]);
+        let options = |background| VolumeOptions {
+            background,
+            ..VolumeOptions::default()
+        };
+        let clear = renderer
+            .render(
+                &transfer(0.0),
+                &camera,
+                24,
+                24,
+                &options([0.2, 0.4, 0.6, 0.25]),
+            )
+            .unwrap();
+        assert!(
+            clear
+                .rgba
+                .chunks_exact(4)
+                .all(|pixel| pixel == [51, 102, 153, 63])
+        );
+        let red = renderer
+            .render(
+                &transfer(0.01),
+                &camera,
+                24,
+                24,
+                &options([0.0, 0.0, 1.0, 0.0]),
+            )
+            .unwrap();
+        let center = &red.rgba[((12 * 24 + 12) * 4) as usize..][..4];
+        assert_eq!(&center[..3], &[255, 0, 0]);
+        assert!(center[3] > 0 && center[3] < 255);
+        let mixed = renderer
+            .render(
+                &transfer(0.01),
+                &camera,
+                24,
+                24,
+                &options([0.0, 0.0, 1.0, 0.5]),
+            )
+            .unwrap();
+        let center = &mixed.rgba[((12 * 24 + 12) * 4) as usize..][..4];
+        assert!(center[0] > 0 && center[2] > 0 && center[3] > 127 && center[3] < 255);
+        assert!((u16::from(center[0]) + u16::from(center[2])).abs_diff(255) <= 2);
+    }
+
+    #[test]
+    fn invalid_volume_materials_fail_instead_of_entering_the_ray_loop() {
+        let ds = gaussian_room();
+        let renderer = VolumeRenderer::new(&ds, "pressure").unwrap();
+        let camera = Camera::fitted(ds.bounds().unwrap());
+        assert!(matches!(
+            renderer.render(
+                &TransferFunction::viridis([f64::NAN, 1.0]),
+                &camera,
+                16,
+                16,
+                &VolumeOptions::default()
+            ),
+            Err(SceneError::InvalidMaterial(_))
+        ));
+        let options = VolumeOptions {
+            background: [f32::NAN; 4],
+            ..VolumeOptions::default()
+        };
+        assert!(matches!(
+            renderer.render(
+                &TransferFunction::viridis([0.0, 1.0]),
+                &camera,
+                16,
+                16,
+                &options
+            ),
+            Err(SceneError::InvalidMaterial(_))
+        ));
+    }
+
+    #[test]
+    fn volume_rays_preserve_coverage_after_large_fractional_translation() {
+        let transfer = TransferFunction::from_stops([0.0, 1.0], &[(0.0, [1.0, 0.0, 0.0, 0.2])]);
+        let options = VolumeOptions {
+            background: [0.0, 0.0, 0.0, 1.0],
+            ..VolumeOptions::default()
+        };
+        let mut reference: Option<Vec<u8>> = None;
+        for offset in [0.0, 1e9 + 0.125, 1e12 + 0.125] {
+            let dataset =
+                DataSet::structured_grid("translated", [3; 3], [offset - 1.0; 3], [1.0; 3])
+                    .unwrap()
+                    .with_field(Field::scalar("p", vec![0.5; 27]));
+            let camera = Camera::fitted(dataset.bounds().unwrap());
+            let frame = VolumeRenderer::new(&dataset, "p")
+                .unwrap()
+                .render(&transfer, &camera, 24, 24, &options)
+                .unwrap();
+            if let Some(reference) = &reference {
+                let error: usize = reference
+                    .iter()
+                    .zip(&frame.rgba)
+                    .map(|(a, b)| usize::from(a.abs_diff(*b)))
+                    .sum();
+                assert!(
+                    error <= frame.rgba.len(),
+                    "mean byte error <= 1, offset {offset}, error {error}"
+                );
+                assert_eq!(
+                    reference.chunks_exact(4).filter(|p| p[0] > 0).count(),
+                    frame.rgba.chunks_exact(4).filter(|p| p[0] > 0).count()
+                );
+            } else {
+                reference = Some(frame.rgba);
+            }
         }
     }
 }

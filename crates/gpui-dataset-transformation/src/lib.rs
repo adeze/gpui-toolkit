@@ -18,14 +18,19 @@
 // Rust guideline compliant 2026-02-21
 
 mod analysis;
+mod append;
 mod base64;
 
 pub use base64::{decode as decode_base64, encode as encode_base64};
 mod calculator;
+mod cell_mean;
+mod cell_plan;
 mod clip;
 mod contours;
 mod convert;
+mod decimate;
 mod eigen;
+mod expression;
 mod flow;
 mod ftle;
 mod geometry;
@@ -36,32 +41,46 @@ mod interp;
 mod isosurface;
 mod lic;
 mod lines;
+mod mean;
 mod parallel;
 mod particles;
 mod plane;
 mod probe;
 mod pvd;
+mod stencil;
 mod streamline;
 mod surface;
 mod surface_io;
 mod tensor_trace;
 mod threshold;
 mod triangulate;
+mod validity;
 mod vtk_io;
 mod vtu;
 mod warp;
+mod weighted_mean;
 mod xdmf;
 
 pub use analysis::{FieldStats, calculator, field_statistics, histogram, resample_to_grid};
+#[doc(inline)]
+pub use append::append_datasets;
 pub use calculator::{complex_magnitude, complex_phase, vector_magnitude};
+#[doc(inline)]
+pub use cell_plan::{CellToPointLimits, CellToPointPlan};
 pub use clip::{clip_halfspace, slice};
 pub use contours::contour_lines;
-pub use convert::{cell_data_to_point_data, point_data_to_cell_data};
+pub use convert::{
+    cell_data_to_point_data, cell_data_to_point_data_validated, point_data_to_cell_data,
+    point_data_to_cell_data_validated,
+};
+#[doc(inline)]
+pub use decimate::decimate;
 pub use flow::{
-    divergence, lambda2, q_criterion, swirling_strength, vorticity, vorticity_magnitude,
+    divergence, flow_diagnostics, lambda2, q_criterion, swirling_strength, vorticity,
+    vorticity_magnitude,
 };
 pub use ftle::ftle;
-pub use geometry::{append_datasets, clip_sphere, decimate, smooth, transform_dataset};
+pub use geometry::{clip_sphere, smooth, transform_dataset};
 pub use glyph::{GlyphKind, glyphs, solid_arrows, tensor_glyphs};
 pub use isosurface::isosurface;
 pub use lic::lic;
@@ -77,7 +96,10 @@ pub use tensor_trace::hyperstreamlines;
 pub use threshold::{ThresholdMode, threshold};
 pub use triangulate::{convex_hull, delaunay_2d};
 pub use vtk_io::{read_vtk, write_vtk};
-pub use vtu::{read_vtu, read_vtu_bytes, write_vtu, write_vtu_appended, write_vtu_compressed};
+pub use vtu::{
+    VtuReadLimits, read_vtu, read_vtu_bytes, read_vtu_bytes_with_limits, read_vtu_with_limits,
+    write_vtu, write_vtu_appended, write_vtu_compressed,
+};
 pub use warp::{warp_by_scalar, warp_by_vector};
 pub use xdmf::{XdmfBundle, read_xdmf, write_xdmf};
 
@@ -103,6 +125,16 @@ pub enum TransformError {
     /// A geometric input is degenerate.
     #[error("degenerate input: {0}")]
     Degenerate(String),
+    /// A bounded preparation would exceed its requested payload budget.
+    #[error("{resource} requires {required} payload bytes, limit is {limit}")]
+    ResourceLimit {
+        /// Preparation resource being bounded.
+        resource: &'static str,
+        /// Requested simultaneous payload bytes.
+        required: usize,
+        /// Caller-selected maximum payload bytes.
+        limit: usize,
+    },
     /// The input dataset failed validation.
     #[error(transparent)]
     Mesh(#[from] gpui_mesh::MeshError),

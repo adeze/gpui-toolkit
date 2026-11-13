@@ -7,6 +7,22 @@ and WASM.
 
 [![License](https://img.shields.io/crates/l/gpui-ui-kit)](LICENSE)
 
+## Build your first app
+
+**[Start here: generate, run, and build a small interactive app →](TUTORIAL.md)**
+
+| Choose a path | What you will build |
+| --- | --- |
+| [Rust: scaffold a native app](TUTORIAL.md#1-scaffold-an-app) | Create a project, add a working counter, run a desktop window, and build a release executable. Continue to the generated iOS and Android hosts. |
+| [Python: write a native app](TUTORIAL.md#12-python-runtime-demo) | Set up the Python package, write the same counter, and run it through the native GPUI host. |
+| [Build with an agent](TUTORIAL.md#agent-workflow) | Discover the CLI contract, scaffold a project, look up real APIs, and verify the result. |
+
+The tutorial explains prerequisites, the difference between `gpui-toolkit`
+(the catalog and development CLI) and `gpui-scaffolder` (the project generator),
+and [what to distribute](TUTORIAL.md#build-and-distribute). Start with desktop;
+[mobile builds](TUTORIAL.md#13-mobile-extension) use the Rust app and platform
+SDKs. Python currently targets the desktop host.
+
 The same UI from Rust, the compact `layout!` macro, or Python:
 
 ```rust
@@ -97,6 +113,7 @@ Two open source examples:
 | [gpui-builder](./crates/gpui-builder/) | Constraint-based layout solver with responsive display tiers, dividers, auto-axis behavior, and showcase examples. |
 | [gpui-component-lab](./crates/gpui-component-lab/) | Prop-driven component lab and responsive preview matrix for design-system conformance work. |
 | [gpui-d3rs](./crates/gpui-d3rs/) | D3.js-inspired visualization primitives: scales, shapes, colors, geo projections, force layouts, Delaunay/Voronoi, GPU 2D, and GPU 3D. |
+| [gpui-dataset-transformation](./crates/gpui-dataset-transformation/) | Pure `DataSet -> DataSet` filters: plane slice/clip, threshold, isosurface, calculators, flow diagnostics, warp, glyphs, streamlines, probe, and VTK/VTU/XDMF I/O. |
 | [gpui-design](./crates/gpui-design/) | Platform-adaptive design system tokens for spacing, corners, typography, animation, and GPUI integration. |
 | [gpui-design-tools](./crates/gpui-design-tools/) | CLI tooling for exporting, importing, and validating design tokens and conformance reports. |
 | [gpui-foreign-parent](./crates/gpui-foreign-parent/) | Platform-neutral core for foreign-parent editor embedding: editor registry, frame throttle, resize debounce, callback slots, and FFI helpers. |
@@ -105,6 +122,7 @@ Two open source examples:
 | [gpui-keybinding](./crates/gpui-keybinding/) | Reusable keybinding framework with editor-style preset support for GPUI applications. |
 | [gpui-layout-expr](./crates/gpui-layout-expr/) | Compact layout-expression AST, parser, and validation shared by the CLI and the `layout!` macro. |
 | [gpui-linux-foreign](./crates/gpui-linux-foreign/) | Linux foreign-parent binding: GPUI editors in host-owned X11 windows (VST3/CLAP) and Wayland subsurfaces (CLAP). |
+| [gpui-mesh](./crates/gpui-mesh/) | Mesh data model only: VTK-style cells (tet/hex/wedge/pyramid), scalar/vector/tensor/complex fields, boundary extraction, and bounded surface chunking. No GPUI/wgpu/IO. |
 | [gpui-miniapp](./crates/gpui-miniapp/) | Small application shell used by examples and showcases to select the right GPUI platform backend. |
 | [gpui-pretext](./crates/gpui-pretext/) | High-performance text measurement and multiline layout utilities. |
 | [gpui-profiler](./crates/gpui-profiler/) | Lightweight allocation profiling and hot-path regression utilities. |
@@ -112,6 +130,8 @@ Two open source examples:
 | [gpui-python-runtime](./crates/gpui-python-runtime/) | Retained scene specification runtime for a GPUI Python wrapper, with an optional showcase. |
 | [gpui-release-gates](./crates/gpui-release-gates/) | Release-QA metadata (stability, gates, publish plan) for the GPUI toolkit workspace. |
 | [gpui-scaffolder](./crates/gpui-scaffolder/) | CLI for creating standalone GPUI mini-app projects backed by `gpui-miniapp`. |
+| [gpui-scene3d](./crates/gpui-scene3d/) | 3D scene rendering: orbit camera, transfer functions, WGSL clipping planes, chunked GPU buffers, software rasterizer, volume raycasting, and time playback. |
+| [gpui-spinorama](./crates/gpui-spinorama/) | Spinorama-style speaker measurement showcase (CEA-2034 and dispersion) with native and wasm entries. |
 | [gpui-themes](./crates/gpui-themes/) | Theme editor and theme showcase infrastructure for GPUI applications. |
 | [gpui-ui-kit](./crates/gpui-ui-kit/) | Reusable UI component library: buttons, inputs, dialogs, menus, tabs, tables, QR, command palette, sidebar, wizard, workflow canvas, and more. |
 | [gpui-ui-kit-macros](./crates/gpui-ui-kit-macros/) | Procedural macros used by `gpui-ui-kit`, including builder and theme derivation helpers. |
@@ -140,7 +160,7 @@ Two open source examples:
 ## GPUI Version
 
 This workspace is currently on the `0.10.x` GPUI toolkit line and vendors GPUI
-from Zed `v1.9.0`, as recorded in the GPUI snapshot provenance.
+from Zed `v1.25.2`, as recorded in the GPUI snapshot provenance.
 
 The workspace uses local path dependencies for toolkit crates and git
 dependencies on the consolidated `sotf-3rdparties` snapshot repository for

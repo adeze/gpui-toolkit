@@ -41,7 +41,7 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.10.44"
+version = "0.11.0"
 authors = ["Pierre F. Aubert pierre@spinorama.org"]
 edition = "2024"
 license = "ISC"
@@ -72,15 +72,15 @@ log = "0.4.28"
 # No deadlock_detection: nothing calls parking_lot::deadlock::*, and the
 # feature pulls in backtrace, which does not compile on iOS/tvOS with
 # libc >= 0.2.190 (dyld symbols became macOS-only).
-parking_lot = { version = "0.12" }
+parking_lot = { version = "0.13.0" }
 raw-window-handle = "0.6"
 regex = "1.12"
 tempfile = "3.23"
 memmap2 = "0.9.11"
 thiserror = "2.0.17"
-arrow-array = "57.0.0"
-arrow-cast = "57.0.0"
-arrow-ipc = "57.0.0"
+arrow-array = "60.1.0"
+arrow-cast = "60.1.0"
+arrow-ipc = "60.1.0"
 unicode-segmentation = "1"
 stats_alloc = "0.1.10"
 
@@ -91,55 +91,56 @@ ndarray = { version = "0.17", default-features = false, features = ["rayon", "bl
 math-delaunay = "0.5"
 
 # GPUI toolkit crates
-gpui-au = { path = "crates/gpui-au", version = "0.10" }
-gpui-android = { path = "crates/gpui-android", version = "0.10" }
-gpui-audio-kit = { path = "crates/gpui-audio-kit", version = "0.10" }
-gpui-builder = { path = "crates/gpui-builder", version = "0.10" }
-gpui-component-lab = { path = "crates/gpui-component-lab", version = "0.10" }
-gpui-d3rs = { path = "crates/gpui-d3rs", version = "0.10", default-features = false }
-gpui-dataset-transformation = { path = "crates/gpui-dataset-transformation", version = "0.10" }
-gpui-design = { path = "crates/gpui-design", version = "0.10" }
-gpui-design-tools = { path = "crates/gpui-design-tools", version = "0.10" }
-gpui-foreign-parent = { path = "crates/gpui-foreign-parent", version = "0.10" }
-gpui-ios = { path = "crates/gpui-ios", version = "0.10" }
-gpui-keybinding = { path = "crates/gpui-keybinding", version = "0.10" }
-gpui-layout-expr = { path = "crates/gpui-layout-expr", version = "0.10" }
-gpui-mesh = { path = "crates/gpui-mesh", version = "0.10" }
-gpui-miniapp = { path = "crates/gpui-miniapp", version = "0.10" }
-gpui-pretext = { path = "crates/gpui-pretext", version = "0.10" }
-gpui-profiler = { path = "crates/gpui-profiler", version = "0.10" }
-gpui-px = { path = "crates/gpui-px", version = "0.10", default-features = false }
-gpui-python-runtime = { path = "crates/gpui-python-runtime", version = "0.10" }
-gpui-release-gates = { path = "crates/gpui-release-gates", version = "0.10" }
-gpui-scaffolder = { path = "crates/gpui-scaffolder", version = "0.10" }
-gpui-showcase = { path = "crates/gpui-showcase", version = "0.10" }
-gpui-themes = { path = "crates/gpui-themes", version = "0.10" }
-gpui-ui-kit = { path = "crates/gpui-ui-kit", version = "0.10" }
-gpui-ui-kit-macros = { path = "crates/gpui-ui-kit-macros", version = "0.10" }
+gpui-au = { path = "crates/gpui-au", version = "0.11" }
+gpui-android = { path = "crates/gpui-android", version = "0.11" }
+gpui-audio-kit = { path = "crates/gpui-audio-kit", version = "0.11" }
+gpui-builder = { path = "crates/gpui-builder", version = "0.11" }
+gpui-component-lab = { path = "crates/gpui-component-lab", version = "0.11" }
+gpui-d3rs = { path = "crates/gpui-d3rs", version = "0.11", default-features = false }
+gpui-dataset-transformation = { path = "crates/gpui-dataset-transformation", version = "0.11" }
+gpui-design = { path = "crates/gpui-design", version = "0.11" }
+gpui-design-tools = { path = "crates/gpui-design-tools", version = "0.11" }
+gpui-foreign-parent = { path = "crates/gpui-foreign-parent", version = "0.11" }
+gpui-ios = { path = "crates/gpui-ios", version = "0.11" }
+gpui-keybinding = { path = "crates/gpui-keybinding", version = "0.11" }
+gpui-layout-expr = { path = "crates/gpui-layout-expr", version = "0.11" }
+gpui-mesh = { path = "crates/gpui-mesh", version = "0.11" }
+gpui-miniapp = { path = "crates/gpui-miniapp", version = "0.11" }
+gpui-pretext = { path = "crates/gpui-pretext", version = "0.11" }
+gpui-profiler = { path = "crates/gpui-profiler", version = "0.11" }
+gpui-px = { path = "crates/gpui-px", version = "0.11", default-features = false }
+gpui-python-runtime = { path = "crates/gpui-python-runtime", version = "0.11" }
+gpui-release-gates = { path = "crates/gpui-release-gates", version = "0.11" }
+gpui-scaffolder = { path = "crates/gpui-scaffolder", version = "0.11" }
+gpui-showcase = { path = "crates/gpui-showcase", version = "0.11" }
+gpui-themes = { path = "crates/gpui-themes", version = "0.11" }
+gpui-ui-kit = { path = "crates/gpui-ui-kit", version = "0.11" }
+gpui-ui-kit-macros = { path = "crates/gpui-ui-kit-macros", version = "0.11" }
 
 # GPUI framework derived from Zed. The dependency keys retain the upstream
 # Rust crate names, while package names are namespaced for crates.io.
-# M6: every sotf-3rdparties dep tracks the foreign-parent-win-linux fork
-# branch (WS_CHILD + X11-child + Wayland-subsurface paths). The pins must
-# move together: fork crates reference each other, so a split rev would
-# compile two copies of gpui. Drop all branch pins once that work merges
-# to the fork's default branch.
-gpui = { package = "sotf-gpui-toolkit-gpui", git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", version = "0.2.3", default-features = false }
-gpui_macos = { package = "sotf-gpui-toolkit-gpui-macos", git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", version = "0.1.1", default-features = false, features = ["font-kit"] }
-gpui_linux = { package = "sotf-gpui-toolkit-gpui-linux", git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", version = "0.1.0", default-features = false }
-gpui_windows = { package = "sotf-gpui-toolkit-gpui-windows", git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", version = "0.1.2", default-features = false }
-gpui_wgpu = { package = "sotf-gpui-toolkit-gpui-wgpu", git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", version = "0.1.2" }
-gpui_web = { package = "sotf-gpui-toolkit-gpui-web", git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", version = "0.1.1" }
-wgpu = { package = "sotf-wgpu",  git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", version = "29.0.0" }
-vello = { package = "sotf-vello", git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", version = "0.10.0", default-features = false, features = ["wgpu"] }
-vello_cpu = { version = "0.2.0" }
+# M6: every sotf-3rdparties dep tracks the fork's default branch (main).
+# The pins must move together: fork crates reference each other, so a split
+# rev would compile two copies of gpui.
+# Zed v1.25.2 stack landed on sotf-3rdparties main via PR #10 (sotf#243);
+# the GPUI family tracks the default branch like every other fork dep.
+gpui = { package = "sotf-gpui-toolkit-gpui", git = "https://github.com/pierreaubert/sotf-3rdparties", version = "0.2.3", default-features = false }
+gpui_apple = { package = "sotf-gpui-toolkit-gpui-apple", git = "https://github.com/pierreaubert/sotf-3rdparties", version = "0.1.0", default-features = false, features = ["font-kit"] }
+gpui_macos = { package = "sotf-gpui-toolkit-gpui-macos", git = "https://github.com/pierreaubert/sotf-3rdparties", version = "0.1.2", default-features = false, features = ["font-kit"] }
+gpui_linux = { package = "sotf-gpui-toolkit-gpui-linux", git = "https://github.com/pierreaubert/sotf-3rdparties", version = "0.1.0", default-features = false }
+gpui_windows = { package = "sotf-gpui-toolkit-gpui-windows", git = "https://github.com/pierreaubert/sotf-3rdparties", version = "0.1.2", default-features = false }
+gpui_wgpu = { package = "sotf-gpui-toolkit-gpui-wgpu", git = "https://github.com/pierreaubert/sotf-3rdparties", version = "0.1.3" }
+gpui_web = { package = "sotf-gpui-toolkit-gpui-web", git = "https://github.com/pierreaubert/sotf-3rdparties", version = "0.1.1" }
+wgpu = { package = "sotf-wgpu",  git = "https://github.com/pierreaubert/sotf-3rdparties", version = "29.0.0" }
+vello = { package = "sotf-vello", git = "https://github.com/pierreaubert/sotf-3rdparties", version = "0.10.0", default-features = false, features = ["wgpu"] }
+vello_cpu = { version = "0.3.0" }
 peniko = { version = "0.6.1" }
 kurbo = { version = "0.13.1" }
 # GPU-text shaping (reviews/20260906-gpu-text.md Phase 0 spike): bundled
 # fonts only — default `system` font enumeration stays off so wasm and
 # deterministic screenshots never touch OS font APIs.
-parley = { version = "0.11.1", default-features = false, features = ["std"] }
-fontique = { version = "0.11.1", default-features = false, features = ["std"] }
+parley = { version = "0.12.0", default-features = false, features = ["std"] }
+fontique = { version = "0.12.0", default-features = false, features = ["std"] }
 
 
 # Utilities
@@ -156,7 +157,7 @@ syn = { version = "3", features = ["full", "parsing", "extra-traits"] }
 
 # Graphics and visualization
 bytemuck = { version = "1.14", features = ["derive"] }
-glam = "0.33"
+glam = "0.34.1"
 pollster = "1"
 wasm-bindgen-futures = "0.4"
 image = { version = "0.25", default-features = false, features = ["bmp", "gif", "ico", "jpeg", "png", "pnm", "tiff", "webp"] }
@@ -171,10 +172,10 @@ rqrr = "0.11.0"
 # Apple platform bindings
 block2 = "0.6"
 core-foundation = "0.10"
-core-graphics = "0.24"
-core-text = "=21.0.0"
-font-kit = { package = "sotf-zed-font-kit", version = "0.14.1-zed", git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux", default-features = false, features = ["source"] }
-objc = { version = "0.2", package = "sotf-objc", git = "https://github.com/pierreaubert/sotf-3rdparties", branch = "foreign-parent-win-linux" }
+core-graphics = "0.25"
+core-text = "22"
+font-kit = { package = "sotf-zed-font-kit", version = "0.14.1-zed", git = "https://github.com/pierreaubert/sotf-3rdparties", default-features = false, features = ["source"] }
+objc = { version = "0.2", package = "sotf-objc", git = "https://github.com/pierreaubert/sotf-3rdparties" }
 oslog = "0.2"
 security-framework = "3.7"
 
@@ -314,6 +315,8 @@ codegen-units = 256
 # use the vendored manifest with Apple mobile target fixes.
 
 [patch.crates-io]
+# Avoid uninhabited Objective-C block statics rejected by future Rust versions.
+block = { git = "https://github.com/pierreaubert/sotf-3rdparties", rev = "5a4634af0916b5f53effa5ef6340efd90af32285" }
 # SOTF owned maintenance forks; upstream 2.1.1, local version 2.1.2.
 
 # NOTE: a bridge [patch."https://github.com/pierreaubert/sotf-3rdparties"]

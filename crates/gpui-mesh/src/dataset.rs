@@ -29,6 +29,18 @@ pub enum CellType {
 }
 
 impl CellType {
+    /// Topological dimension: vertex 0, line 1, surface 2, volume 3.
+    #[inline]
+    #[must_use]
+    pub const fn dimension(self) -> u8 {
+        match self {
+            Self::Vertex => 0,
+            Self::Line => 1,
+            Self::Triangle | Self::Quad | Self::Polygon => 2,
+            Self::Tetra | Self::Hexahedron | Self::Wedge | Self::Pyramid => 3,
+        }
+    }
+
     /// Fixed node count for this cell kind.
     #[must_use]
     pub fn node_count(self) -> usize {
@@ -93,6 +105,22 @@ impl Cells {
         }
         Self {
             types: types.into(),
+            offsets: offsets.into(),
+            connectivity: connectivity.into(),
+        }
+    }
+
+    /// Convenience constructor for indexed line segments.
+    pub fn lines(lines: &[[u32; 2]]) -> Self {
+        let mut offsets = Vec::with_capacity(lines.len() + 1);
+        let mut connectivity = Vec::with_capacity(lines.len() * 2);
+        offsets.push(0);
+        for line in lines {
+            connectivity.extend_from_slice(line);
+            offsets.push(connectivity.len() as u64);
+        }
+        Self {
+            types: vec![CellType::Line; lines.len()].into(),
             offsets: offsets.into(),
             connectivity: connectivity.into(),
         }
@@ -179,13 +207,37 @@ pub enum DataSetKind {
 /// Validation failures for datasets and fields.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum MeshError {
+    /// A requested construction exceeds an address or array-workspace limit.
+    #[error("{resource} requires {requested}, limit is {limit}")]
+    ResourceLimit {
+        /// Limited count or byte category.
+        resource: &'static str,
+        /// Requested count/bytes; `u64::MAX` represents arithmetic overflow.
+        requested: u64,
+        /// Effective limit.
+        limit: u64,
+    },
+    /// Reserving a checked construction buffer failed.
+    #[error("could not allocate {bytes} bytes for mesh construction")]
+    Allocation {
+        /// Requested buffer element bytes.
+        bytes: u64,
+    },
+    /// Curvilinear positions must match the checked dimension product.
+    #[error("grid has {positions} positions, expected {expected}")]
+    GridPositionCountMismatch {
+        /// Provided position count.
+        positions: usize,
+        /// Checked dimension product.
+        expected: usize,
+    },
     /// Time-series steps are inconsistent with each other.
     #[error("invalid time series: {reason}")]
     InvalidTimeSeries {
         /// What is inconsistent.
         reason: String,
     },
-    /// Positions must not be empty.
+    /// Nonempty cells require positions.
     #[error("positions array is empty")]
     EmptyPositions,
     /// Every position component must be finite.
@@ -237,6 +289,24 @@ pub enum MeshError {
         /// Field association.
         association: Association,
     },
+    /// A field's declared association must match the array that stores it.
+    #[error("field '{field}' declares {declared:?} association but is stored in {stored:?} data")]
+    FieldAssociationMismatch {
+        /// Field name.
+        field: String,
+        /// Association declared by the field.
+        declared: Association,
+        /// Association implied by its storage array.
+        stored: Association,
+    },
+    /// Field names must be unique within each association.
+    #[error("duplicate {association:?} field '{field}'")]
+    DuplicateField {
+        /// Ambiguous field name.
+        field: String,
+        /// Association containing the duplicate.
+        association: Association,
+    },
     /// A validity mask must match the field length.
     #[error("field '{field}' validity mask length {mask} != values length {values}")]
     MaskLengthMismatch {
@@ -278,7 +348,62 @@ pub struct DataSet {
     pub cell_data: Vec<Field>,
 }
 
+/// Immutable dataset view whose schema, geometry and fields were validated.
+///
+/// Retain this borrow to share one validation across multiple read-only
+/// operations. The view never copies backing arrays. Mutation of the source is
+/// prevented while a view remains in use.
+///
+/// ```compile_fail
+/// use gpui_mesh::{Cells, DataSet};
+/// let mut data = DataSet::new("points", vec![[0.0; 3]], Cells::from_cells(&[]));
+/// let checked = data.validated().unwrap();
+/// data.positions = vec![[f64::NAN; 3]].into();
+/// assert_eq!(checked.as_dataset().point_count(), 1);
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct ValidatedDataSet<'a> {
+    dataset: &'a DataSet,
+    uniform_dimension: Option<u8>,
+}
+
+impl<'a> ValidatedDataSet<'a> {
+    /// Returns the immutable, validated source dataset.
+    #[must_use]
+    pub fn as_dataset(self) -> &'a DataSet {
+        self.dataset
+    }
+
+    /// Uniform cell dimension, or `None` for empty/mixed-dimensional cells.
+    #[must_use]
+    pub fn uniform_cell_dimension(self) -> Option<u8> {
+        self.uniform_dimension
+    }
+}
+
 impl DataSet {
+    /// Validates once and returns a reusable immutable view.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::validate`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use gpui_mesh::{Cells, DataSet};
+    /// let data = DataSet::new("points", vec![[0.0; 3]], Cells::from_cells(&[]));
+    /// let checked = data.validated().unwrap();
+    /// assert_eq!(checked.as_dataset().point_count(), 1);
+    /// ```
+    pub fn validated(&self) -> Result<ValidatedDataSet<'_>, MeshError> {
+        let uniform_dimension = self.validate_inner::<true>()?;
+        Ok(ValidatedDataSet {
+            dataset: self,
+            uniform_dimension,
+        })
+    }
+
     /// Creates a dataset from raw parts. Call [`DataSet::validate`] before use.
     pub fn new(
         id: impl Into<Arc<str>>,
@@ -294,60 +419,6 @@ impl DataSet {
         }
     }
 
-    /// Creates a rectilinear grid: per-axis coordinates, structured
-    /// hexahedral connectivity (x-fastest point order).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when any axis is empty.
-    pub fn rectilinear_grid(
-        id: impl Into<Arc<str>>,
-        xs: &[f64],
-        ys: &[f64],
-        zs: &[f64],
-    ) -> Result<Self, MeshError> {
-        let dims = [xs.len(), ys.len(), zs.len()];
-        if dims.contains(&0) {
-            return Err(MeshError::InvalidDims { dims });
-        }
-        let mut positions = Vec::with_capacity(dims[0] * dims[1] * dims[2]);
-        for &z in zs {
-            for &y in ys {
-                for &x in xs {
-                    positions.push([x, y, z]);
-                }
-            }
-        }
-        let cells = structured_cells(dims);
-        let refs: Vec<(CellType, &[u32])> = cells.iter().map(|(t, n)| (*t, n.as_slice())).collect();
-        Ok(Self::new(id, positions, Cells::from_cells(&refs)))
-    }
-
-    /// Creates a curvilinear structured grid from explicit points.
-    ///
-    /// `positions` must hold exactly `dims[0] * dims[1] * dims[2]` points
-    /// in x-fastest order; connectivity is the structured hexahedral
-    /// layout, positions arbitrary (warped grids, body-fitted meshes).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error on empty dimensions or a point-count mismatch.
-    pub fn curvilinear_grid(
-        id: impl Into<Arc<str>>,
-        dims: [usize; 3],
-        positions: Vec<[f64; 3]>,
-    ) -> Result<Self, MeshError> {
-        if dims.contains(&0) {
-            return Err(MeshError::InvalidDims { dims });
-        }
-        if positions.len() != dims[0] * dims[1] * dims[2] {
-            return Err(MeshError::InvalidDims { dims });
-        }
-        let cells = structured_cells(dims);
-        let refs: Vec<(CellType, &[u32])> = cells.iter().map(|(t, n)| (*t, n.as_slice())).collect();
-        Ok(Self::new(id, positions, Cells::from_cells(&refs)))
-    }
-
     /// Creates a triangle-surface dataset.
     pub fn surface(
         id: impl Into<Arc<str>>,
@@ -355,59 +426,6 @@ impl DataSet {
         triangles: &[[u32; 3]],
     ) -> Self {
         Self::new(id, positions, Cells::triangles(triangles))
-    }
-
-    /// Creates a structured hexahedral grid from dimensions and an origin/spacing mapping.
-    ///
-    /// Points are ordered x-fastest. A dimension of 1 yields a surface or line grid
-    /// topologically; hexahedra are only emitted when all dimensions exceed 1.
-    pub fn structured_grid(
-        id: impl Into<Arc<str>>,
-        dims: [usize; 3],
-        origin: [f64; 3],
-        spacing: [f64; 3],
-    ) -> Result<Self, MeshError> {
-        if dims.contains(&0) {
-            return Err(MeshError::InvalidDims { dims });
-        }
-        let [nx, ny, nz] = dims;
-        let mut positions = Vec::with_capacity(nx * ny * nz);
-        for k in 0..nz {
-            for j in 0..ny {
-                for i in 0..nx {
-                    positions.push([
-                        origin[0] + i as f64 * spacing[0],
-                        origin[1] + j as f64 * spacing[1],
-                        origin[2] + k as f64 * spacing[2],
-                    ]);
-                }
-            }
-        }
-        let idx = |i: usize, j: usize, k: usize| (k * ny * nx + j * nx + i) as u32;
-        let mut cells: Vec<(CellType, [u32; 8])> = Vec::new();
-        if nx > 1 && ny > 1 && nz > 1 {
-            for k in 0..nz - 1 {
-                for j in 0..ny - 1 {
-                    for i in 0..nx - 1 {
-                        cells.push((
-                            CellType::Hexahedron,
-                            [
-                                idx(i, j, k),
-                                idx(i + 1, j, k),
-                                idx(i + 1, j + 1, k),
-                                idx(i, j + 1, k),
-                                idx(i, j, k + 1),
-                                idx(i + 1, j, k + 1),
-                                idx(i + 1, j + 1, k + 1),
-                                idx(i, j + 1, k + 1),
-                            ],
-                        ));
-                    }
-                }
-            }
-        }
-        let refs: Vec<(CellType, &[u32])> = cells.iter().map(|(t, n)| (*t, n.as_slice())).collect();
-        Ok(Self::new(id, positions, Cells::from_cells(&refs)))
     }
 
     /// Adds a field, routing it by association. Returns `self` for chaining.
@@ -487,11 +505,18 @@ impl DataSet {
 
     /// Validates positions, cells, and every field.
     ///
+    /// Empty filter results are valid when they contain no cells and all
+    /// point/cell fields are empty. Their bounds are `None`.
+    ///
     /// # Errors
     ///
     /// Returns the first [`MeshError`] encountered.
     pub fn validate(&self) -> Result<(), MeshError> {
-        if self.positions.is_empty() {
+        self.validate_inner::<false>().map(|_| ())
+    }
+
+    fn validate_inner<const SUMMARY: bool>(&self) -> Result<Option<u8>, MeshError> {
+        if self.positions.is_empty() && !self.cells.is_empty() {
             return Err(MeshError::EmptyPositions);
         }
         for (index, p) in self.positions.iter().enumerate() {
@@ -511,7 +536,15 @@ impl DataSet {
         {
             return Err(MeshError::InvalidOffsets);
         }
+        let mut uniform_dimension = if SUMMARY {
+            self.cells.types.first().map(|kind| kind.dimension())
+        } else {
+            None
+        };
         for (cell, ty) in self.cells.types.iter().enumerate() {
+            if SUMMARY && uniform_dimension.is_some_and(|dimension| dimension != ty.dimension()) {
+                uniform_dimension = None;
+            }
             let nodes = self.cells.cell(cell).unwrap_or(&[]);
             let bad_len = if *ty == CellType::Polygon {
                 nodes.len() < 3
@@ -535,10 +568,38 @@ impl DataSet {
                 }
             }
         }
-        for field in self.point_data.iter().chain(&self.cell_data) {
-            self.validate_field(field)?;
+        for (association, fields) in [
+            (Association::Point, &self.point_data),
+            (Association::Cell, &self.cell_data),
+        ] {
+            // Ordinary schemas avoid allocation; large schemas avoid quadratic
+            // name comparisons. Borrowed names need no string copies or entropy.
+            let mut names = (fields.len() > 16).then(std::collections::BTreeSet::new);
+            for (index, field) in fields.iter().enumerate() {
+                if field.association != association {
+                    return Err(MeshError::FieldAssociationMismatch {
+                        field: field.name.to_string(),
+                        declared: field.association,
+                        stored: association,
+                    });
+                }
+                let duplicate = if let Some(names) = &mut names {
+                    !names.insert(field.name.as_ref())
+                } else {
+                    fields[..index]
+                        .iter()
+                        .any(|previous| previous.name == field.name)
+                };
+                if duplicate {
+                    return Err(MeshError::DuplicateField {
+                        field: field.name.to_string(),
+                        association,
+                    });
+                }
+                self.validate_field(field)?;
+            }
         }
-        Ok(())
+        Ok(uniform_dimension)
     }
 
     fn validate_field(&self, field: &Field) -> Result<(), MeshError> {
@@ -660,33 +721,4 @@ mod tests {
             Err(MeshError::FieldLengthMismatch { .. })
         ));
     }
-}
-
-/// Structured hexahedral connectivity for `dims` (x-fastest points).
-fn structured_cells(dims: [usize; 3]) -> Vec<(CellType, [u32; 8])> {
-    let [nx, ny, nz] = dims;
-    let idx = |i: usize, j: usize, k: usize| (k * ny * nx + j * nx + i) as u32;
-    let mut cells = Vec::new();
-    if nx > 1 && ny > 1 && nz > 1 {
-        for k in 0..nz - 1 {
-            for j in 0..ny - 1 {
-                for i in 0..nx - 1 {
-                    cells.push((
-                        CellType::Hexahedron,
-                        [
-                            idx(i, j, k),
-                            idx(i + 1, j, k),
-                            idx(i + 1, j + 1, k),
-                            idx(i, j + 1, k),
-                            idx(i, j, k + 1),
-                            idx(i + 1, j, k + 1),
-                            idx(i + 1, j + 1, k + 1),
-                            idx(i, j + 1, k + 1),
-                        ],
-                    ));
-                }
-            }
-        }
-    }
-    cells
 }

@@ -13,14 +13,23 @@
 
 pub mod animate;
 pub mod camera;
+mod clipping;
 #[cfg(feature = "gpui")]
 pub mod element;
+#[cfg(feature = "gpui-gpu")]
+mod gpu_element;
 #[cfg(feature = "gpu")]
 pub mod gpu_render;
 pub mod legend;
+pub mod limits;
 pub mod movie;
 pub mod prepare;
+#[cfg(any(feature = "gpui", test))]
+mod presentation;
+mod primitives;
 pub mod raster;
+pub mod retained;
+mod scalar;
 pub mod scene;
 pub mod shaders;
 pub mod transfer;
@@ -29,16 +38,20 @@ pub mod volume;
 pub use animate::Player;
 pub use camera::{Camera, Projection};
 #[cfg(feature = "gpu")]
-pub use gpu_render::{GpuRenderError, GpuRenderer, GpuScene, GpuTarget};
+pub use gpu_render::{GpuAttachments, GpuRenderError, GpuRenderer, GpuScene, GpuTarget};
 pub use legend::{
     Annotation, ColorBar, ColorBarLayout, Rect, draw_axis_triad, draw_colorbar, layout_colorbar,
     nice_ticks,
 };
+#[doc(inline)]
+pub use limits::{GpuUploadLimits, RenderLimits};
 pub use movie::{MovieError, TimedFrame, frame_rate, validate_frames};
-pub use prepare::{GpuChunk, prepare_chunks};
-pub use raster::{Frame, render};
+pub use prepare::{GpuChunk, prepare_chunks, prepare_chunks_with_limits};
+pub use raster::{Frame, render, render_with_limits};
+#[doc(inline)]
+pub use retained::{PreparationStats, PreparedScene};
 pub use scene::{Actor, ClipBox, ClipPlane, Scene};
-pub use transfer::TransferFunction;
+pub use transfer::{PreparedTransfer, TransferFunction};
 pub use volume::{VolumeOptions, VolumeRenderer, raycast_volume};
 
 /// Failures reported by scene preparation and rendering.
@@ -53,4 +66,35 @@ pub enum SceneError {
     /// A render target dimension is zero.
     #[error("render size must be non-zero, got {0}x{1}")]
     InvalidSize(u32, u32),
+    /// Camera parameters cannot define a finite visible frustum.
+    #[error("invalid scene camera: {0}")]
+    InvalidCamera(&'static str),
+    /// A plane contains nonfinite or unrepresentable coefficients.
+    #[error("invalid clipping plane: {0}")]
+    InvalidClipPlane(&'static str),
+    /// A backend cannot retain a required nonzero coefficient.
+    #[error("unsupported rendering precision: {0}")]
+    UnsupportedPrecision(&'static str),
+    /// Material settings cannot define finite normalized colors or opacity.
+    #[error("invalid scene material: {0}")]
+    InvalidMaterial(&'static str),
+    /// Playback controls cannot define a supported finite time update.
+    #[error("invalid playback: {0}")]
+    InvalidPlayback(&'static str),
+    /// A requested resource exceeds the host's working-set allowance.
+    #[error("{resource} requires {requested}, limit is {limit}")]
+    ResourceLimit {
+        /// Resource being checked.
+        resource: &'static str,
+        /// Requested dimension or byte count.
+        requested: u64,
+        /// Maximum permitted count.
+        limit: u64,
+    },
+    /// The allocator could not reserve a checked buffer.
+    #[error("could not allocate {bytes} bytes")]
+    Allocation {
+        /// Requested backing storage bytes.
+        bytes: u64,
+    },
 }
